@@ -24,6 +24,7 @@ from .trade_db import (
 )
 from .risk import (
     calculate_stop_and_target,
+    calculate_risk_based_quantity,
     is_daily_loss_limit_reached,
     should_trail_to_breakeven,
 )
@@ -58,6 +59,7 @@ __all__ = [
     'calculate_order_quantity',
     'get_persisted_paper_capital',
     'calculate_stop_and_target',
+    'calculate_risk_based_quantity',
     'is_daily_loss_limit_reached',
     'should_trail_to_breakeven',
 ]

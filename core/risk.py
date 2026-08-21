@@ -78,3 +78,34 @@ def should_trail_to_breakeven(
     if already_trailed or risk <= 0:
         return False
     return low_price <= (entry_price - risk)
+
+
+def calculate_risk_based_quantity(
+    entry_price: float,
+    sl_price: float,
+    current_capital: float,
+    max_risk_pct: float = 0.01,
+    max_exposure: float = 0.0
+) -> int:
+    """
+    Calculates the integer share quantity based on Fixed Fractional Risk Sizing (Issue #24).
+    Ensures maximum loss at Stop-Loss does not exceed (current_capital * max_risk_pct).
+    Applies dual-guard: min(risk_quantity, margin_quantity).
+    """
+    if entry_price <= 0 or current_capital <= 0:
+        return 0
+
+    risk_per_share = abs(sl_price - entry_price)
+    if risk_per_share <= 0:
+        risk_per_share = entry_price * 0.0020  # Fallback to 0.2% min buffer
+
+    max_risk_inr = current_capital * max_risk_pct
+    risk_qty = int(math.floor(max_risk_inr / risk_per_share))
+
+    if max_exposure > 0:
+        margin_qty = int(math.floor(max_exposure / entry_price))
+        final_qty = min(risk_qty, margin_qty)
+    else:
+        final_qty = risk_qty
+
+    return max(1, final_qty) if (max_exposure <= 0 or max_exposure >= entry_price) else 0

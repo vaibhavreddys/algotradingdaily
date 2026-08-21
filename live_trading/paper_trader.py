@@ -69,7 +69,9 @@ class PaperTradingEngine(BaseTradingEngine):
             entry_price=entry_price,
             current_capital=self.virtual_balance,
             max_concurrent_positions=self.config.MAX_CONCURRENT_POSITIONS,
-            leverage_mis=self.config.LEVERAGE_MIS
+            leverage_mis=self.config.LEVERAGE_MIS,
+            sl_price=sl_price,
+            max_risk_pct=self.config.MAX_RISK_PER_TRADE_PCT
         )
         risk = sl_price - entry_price
         entry_time = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')

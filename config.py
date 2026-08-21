@@ -52,7 +52,8 @@ class TradingConfig:
     SWING_SL_BUFFER_PCT: float = 0.0005    # 0.05% anti-wick buffer above swing high
     SWING_HIGH_BARS: int = 3               # 3-bar swing high lookback
     RISK_REWARD_RATIO: float = 2.0         # 1:2 R:R target
-    MAX_DAILY_LOSS_PCT: float = 0.04        # 3% Max Daily Portfolio Loss Circuit Breaker
+    MAX_DAILY_LOSS_PCT: float = 0.04        # 4% Max Daily Portfolio Loss Circuit Breaker
+    MAX_RISK_PER_TRADE_PCT: float = 0.01    # 1% Max Portfolio Risk Per Trade (Issue #24)
 
     # Computed Properties
     @property

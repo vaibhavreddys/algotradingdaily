@@ -142,7 +142,9 @@ class LiveTradingEngine(BaseTradingEngine):
             entry_price=current_price,
             current_capital=current_capital,
             max_concurrent_positions=self.config.MAX_CONCURRENT_POSITIONS,
-            leverage_mis=self.config.LEVERAGE_MIS
+            leverage_mis=self.config.LEVERAGE_MIS,
+            sl_price=sl_price,
+            max_risk_pct=self.config.MAX_RISK_PER_TRADE_PCT
         )
         risk = sl_price - current_price
         target_pts = current_price - tp_price

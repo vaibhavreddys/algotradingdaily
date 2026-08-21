@@ -45,16 +45,21 @@ def calculate_order_quantity(
     entry_price: float,
     current_capital: float,
     max_concurrent_positions: int,
-    leverage_mis: int = 5
+    leverage_mis: int = 5,
+    sl_price: Optional[float] = None,
+    max_risk_pct: Optional[float] = None
 ) -> int:
     """
     Calculates the discrete integer number of shares to buy/short for an entry.
+    Supports Dual-Guard: Margin-based exposure cap + Fixed 1% Risk Sizing (Issue #24).
 
     Args:
         entry_price: Executed or projected fill price of the underlying asset.
         current_capital: Total active equity / capital balance in INR.
         max_concurrent_positions: Number of concurrent position slots.
         leverage_mis: Broker MIS leverage multiplier.
+        sl_price: Optional Stop Loss price to calculate risk-based position sizing.
+        max_risk_pct: Optional risk percentage per trade (default from CONFIG.MAX_RISK_PER_TRADE_PCT).
 
     Returns:
         Integer share quantity (minimum 1 if capital allows, or 0 if capital is depleted).
@@ -62,6 +67,18 @@ def calculate_order_quantity(
     if entry_price <= 0 or current_capital <= 0:
         return 0
     exposure = get_slot_exposure(current_capital, max_concurrent_positions, leverage_mis)
+    
+    if sl_price is not None and sl_price > 0:
+        from core.risk import calculate_risk_based_quantity
+        effective_risk_pct = max_risk_pct if max_risk_pct is not None else getattr(CONFIG, 'MAX_RISK_PER_TRADE_PCT', 0.01)
+        return calculate_risk_based_quantity(
+            entry_price=entry_price,
+            sl_price=sl_price,
+            current_capital=current_capital,
+            max_risk_pct=effective_risk_pct,
+            max_exposure=exposure
+        )
+
     qty = int(math.floor(exposure / entry_price))
     return max(1, qty) if exposure >= entry_price else 0
 
