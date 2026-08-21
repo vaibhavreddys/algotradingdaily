@@ -31,6 +31,7 @@ if hasattr(sys.stdout, 'reconfigure'):
 from core.charges import calculate_charges
 from core.capital import get_slot_margin, get_slot_exposure
 from core.risk import is_daily_loss_limit_reached
+from core.report import print_simulation_report, print_multi_broker_matrix
 from config import CONFIG, TradingConfig
 from data_pipeline import get_nifty50_symbols, fetch_nifty_benchmark, load_candle_data
 from strategies.vwap_stoch_breakdown import (
@@ -180,74 +181,6 @@ def simulate_portfolio_execution(signals_df: pd.DataFrame, config: TradingConfig
     return tdf, capital, total_charges_paid, final_exposure, final_slot_margin
 
 
-def print_simulation_report(
-    tdf: pd.DataFrame,
-    ending_capital: float,
-    total_charges: float,
-    config: TradingConfig = CONFIG,
-    dataset_date_range: Optional[tuple] = None
-):
-    """Prints a formatted summary dashboard of the portfolio simulation performance."""
-    if tdf.empty:
-        print("\n⚠️ No trades were executed during this simulation period.")
-        return
-
-    initial_capital = config.INITIAL_CAPITAL
-    win_count = len(tdf[tdf['Net PnL (₹)'] > 0])
-    loss_count = len(tdf[tdf['Net PnL (₹)'] <= 0])
-    total_trades = len(tdf)
-    win_rate = (win_count / total_trades) * 100 if total_trades > 0 else 0
-    net_profit = ending_capital - initial_capital
-    net_return_pct = (net_profit / initial_capital) * 100
-    gross_profit = net_profit + total_charges
-    gross_return_pct = (gross_profit / initial_capital) * 100
-
-    if dataset_date_range and dataset_date_range[0] and dataset_date_range[1]:
-        start_date, end_date, trading_days = dataset_date_range
-    else:
-        start_date = pd.to_datetime(tdf['Entry Time']).min().strftime('%Y-%m-%d')
-        end_date = pd.to_datetime(tdf['Exit Time']).max().strftime('%Y-%m-%d')
-        trading_days = len(pd.to_datetime(tdf['Entry Time']).dt.date.unique())
-
-    # Quantitative Risk & Performance Analytics
-    gross_gains = tdf[tdf['Gross PnL (₹)'] > 0]['Gross PnL (₹)'].sum()
-    gross_losses = abs(tdf[tdf['Gross PnL (₹)'] <= 0]['Gross PnL (₹)'].sum())
-    profit_factor = (gross_gains / gross_losses) if gross_losses > 0 else float('inf')
-
-    # Max Drawdown (MDD) on Capital Curve
-    cum_equity = tdf['Capital']
-    running_peak = cum_equity.cummax()
-    drawdown_series = cum_equity - running_peak
-    mdd_val = abs(drawdown_series.min()) if not drawdown_series.empty else 0.0
-    # Peak capital at time of MDD trough
-    trough_idx = drawdown_series.idxmin() if not drawdown_series.empty else 0
-    peak_at_trough = running_peak.loc[trough_idx] if not drawdown_series.empty else initial_capital
-    mdd_pct = (mdd_val / peak_at_trough) * 100 if peak_at_trough > 0 else 0.0
-
-    # Delegate Presentation & Metrics to core.report layer (Issue #14)
-    from core.report import print_simulation_report, print_multi_broker_matrix
-
-    print_simulation_report(
-        tdf=tdf,
-        initial_capital=initial_capital,
-        ending_capital=ending_capital,
-        gross_profit=gross_profit,
-        total_charges=total_charges,
-        net_profit=net_profit,
-        start_date=start_date,
-        end_date=end_date,
-        trading_days=trading_days,
-        config=config,
-        strategy_name=STRATEGY_NAME
-    )
-
-    print_multi_broker_matrix(
-        tdf=tdf,
-        initial_capital=initial_capital,
-        config=config
-    )
-
-
 def run_portfolio_simulation(config: TradingConfig = CONFIG, refresh: bool = False):
     """Main orchestrator for the portfolio simulation."""
     symbols = get_nifty50_symbols()
@@ -271,12 +204,19 @@ def run_portfolio_simulation(config: TradingConfig = CONFIG, refresh: bool = Fal
         bench_days = len(set(idx_dt.date))
         dataset_date_range = (bench_start, bench_end, bench_days)
 
+    # Render comprehensive performance dashboard & multi-broker matrix via core.report
     print_simulation_report(
         tdf=tdf,
         ending_capital=ending_capital,
         total_charges=total_charges,
         config=config,
-        dataset_date_range=dataset_date_range
+        dataset_date_range=dataset_date_range,
+        strategy_name=STRATEGY_NAME
+    )
+    print_multi_broker_matrix(
+        tdf=tdf,
+        initial_capital=config.INITIAL_CAPITAL,
+        config=config
     )
 
 

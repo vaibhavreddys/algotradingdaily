@@ -31,22 +31,20 @@ def format_outcome_distribution(counts_series_or_dict: Any, total_trades: int) -
 
 def print_simulation_report(
     tdf: pd.DataFrame,
-    initial_capital: float,
     ending_capital: float,
-    gross_profit: float,
     total_charges: float,
-    net_profit: float,
-    start_date: str,
-    end_date: str,
-    trading_days: int,
     config: Any,
+    dataset_date_range: Optional[Tuple[str, str, int]] = None,
     strategy_name: str = "VWAP-STOCH BREAKDOWN"
 ) -> None:
     """
     Renders formatted portfolio simulation summary including quantitative edge metrics:
     Profit Factor, Max Drawdown (₹/%), Max Equity Runup, Streaks, Expectancy, and Avg Win/Loss.
+    Computes date ranges and net/gross profit automatically.
     """
     total_trades = len(tdf)
+    initial_capital = config.INITIAL_CAPITAL
+
     if total_trades == 0:
         print("\n=======================================================")
         print(f"      STRATEGY: {strategy_name.upper()}")
@@ -60,12 +58,21 @@ def print_simulation_report(
     loss_count = len(tdf[tdf['PnL %'] <= 0])
     win_rate = (win_count / total_trades) * 100
 
+    net_profit = ending_capital - initial_capital
+    gross_profit = net_profit + total_charges
+    gross_return_pct = (gross_profit / initial_capital) * 100
+    net_return_pct = (net_profit / initial_capital) * 100
+
+    if dataset_date_range and dataset_date_range[0] and dataset_date_range[1]:
+        start_date, end_date, trading_days = dataset_date_range
+    else:
+        start_date = pd.to_datetime(tdf['Entry Time']).min().strftime('%Y-%m-%d')
+        end_date = pd.to_datetime(tdf['Exit Time']).max().strftime('%Y-%m-%d')
+        trading_days = len(pd.to_datetime(tdf['Entry Time']).dt.date.unique())
+
     gross_gains = tdf[tdf['Gross PnL (₹)'] > 0]['Gross PnL (₹)'].sum()
     gross_losses = abs(tdf[tdf['Gross PnL (₹)'] <= 0]['Gross PnL (₹)'].sum())
     profit_factor = (gross_gains / gross_losses) if gross_losses > 0 else 999.99
-
-    gross_return_pct = (gross_profit / initial_capital) * 100
-    net_return_pct = (net_profit / initial_capital) * 100
 
     # Max Drawdown (MDD) calculation
     running_peak = tdf['Capital'].cummax()

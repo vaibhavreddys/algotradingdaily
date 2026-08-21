@@ -26,7 +26,9 @@ class TestReportModule(unittest.TestCase):
             'Gross PnL (₹)': [200.0, -100.0, 150.0],
             'Net PnL (₹)': [180.0, -120.0, 130.0],
             'Capital': [10180.0, 10060.0, 10190.0],
-            'Result': ['TARGET_HIT', 'SL_HIT', '3PM_EXIT']
+            'Result': ['TARGET_HIT', 'SL_HIT', '3PM_EXIT'],
+            'Entry Time': ['2026-06-01 10:15:00', '2026-06-02 10:30:00', '2026-06-03 11:00:00'],
+            'Exit Time': ['2026-06-01 15:00:00', '2026-06-02 11:30:00', '2026-06-03 15:00:00']
         })
         cfg = TradingConfig(INITIAL_CAPITAL=10000.0, MAX_CONCURRENT_POSITIONS=2)
 
@@ -36,15 +38,10 @@ class TestReportModule(unittest.TestCase):
         try:
             print_simulation_report(
                 tdf=df,
-                initial_capital=10000.0,
                 ending_capital=10190.0,
-                gross_profit=250.0,
                 total_charges=60.0,
-                net_profit=190.0,
-                start_date="2026-06-01",
-                end_date="2026-08-21",
-                trading_days=59,
-                config=cfg
+                config=cfg,
+                dataset_date_range=("2026-06-01", "2026-08-21", 59)
             )
         finally:
             sys.stdout = old_stdout
