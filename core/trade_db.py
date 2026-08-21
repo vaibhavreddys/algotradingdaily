@@ -125,9 +125,22 @@ def init_db(mode: Optional[str] = None) -> None:
                 gross_pnl REAL NOT NULL,
                 taxes_fees REAL NOT NULL,
                 net_pnl REAL NOT NULL,
+                balance_after_trade REAL,
                 created_at TEXT NOT NULL
             )
         """)
+
+        # 3. Schema Auto-Migration: Add balance_after_trade if missing
+        cursor.execute("PRAGMA table_info(trade_history);")
+        columns = [col[1] for col in cursor.fetchall()]
+        if "balance_after_trade" not in columns:
+            cursor.execute("ALTER TABLE trade_history ADD COLUMN balance_after_trade REAL DEFAULT NULL;")
+            cursor.execute("SELECT id, net_pnl FROM trade_history ORDER BY id ASC;")
+            existing_rows = cursor.fetchall()
+            running_bal = CONFIG.INITIAL_CAPITAL
+            for r_id, pnl in existing_rows:
+                running_bal += float(pnl)
+                cursor.execute("UPDATE trade_history SET balance_after_trade = ? WHERE id = ?", (round(running_bal, 2), r_id))
 
         # 3. Performance Composite B-Tree Indexes
         cursor.execute("""
@@ -216,11 +229,23 @@ def close_and_archive_position(
             
         pos_dict = dict(pos)
         
-        # 2. Insert into permanent trade_history
+        # 2. Fetch previous balance_after_trade to maintain atomic ledger
+        cursor.execute("SELECT balance_after_trade FROM trade_history ORDER BY id DESC LIMIT 1;")
+        last_row = cursor.fetchone()
+        if last_row and last_row[0] is not None:
+            prev_balance = float(last_row[0])
+        else:
+            cursor.execute("SELECT SUM(net_pnl) FROM trade_history;")
+            cum_sum = cursor.fetchone()[0]
+            prev_balance = CONFIG.INITIAL_CAPITAL + (float(cum_sum) if cum_sum is not None else 0.0)
+
+        new_balance = round(prev_balance + float(net_pnl), 2)
+
+        # 3. Insert into permanent trade_history
         cursor.execute("""
             INSERT INTO trade_history 
-            (symbol, order_type, entry_time, exit_time, entry_price, exit_price, quantity, result, gross_pnl, taxes_fees, net_pnl, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (symbol, order_type, entry_time, exit_time, entry_price, exit_price, quantity, result, gross_pnl, taxes_fees, net_pnl, balance_after_trade, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             symbol,
             pos_dict.get("order_type", "BO"),
@@ -233,6 +258,7 @@ def close_and_archive_position(
             round(float(gross_pnl), 2),
             round(float(taxes_fees), 2),
             round(float(net_pnl), 2),
+            new_balance,
             now_str
         ))
         

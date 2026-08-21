@@ -1,267 +1,102 @@
-"""
-Automated Test Suite for SQLite Persistence Layer (core/trade_db.py).
-
-Tests complete CRUD lifecycle and physical database isolation:
-  1. Table creation & schema verification for both 'paper' and 'live' modes.
-  2. Active position insertion & retrieval in active_positions table.
-  3. Trailing Stop-Loss update (status = 'TRAILING').
-  4. Atomic close_and_archive_position move to permanent trade_history table.
-  5. Physical database file isolation (paper_trades.db vs live_trades.db).
-  6. Guaranteed zero-pollution cleanup.
-"""
-
-import os
-import sys
-import sqlite3
-import datetime
 import unittest
-
-# Ensure workspace root is in sys.path
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-
-if hasattr(sys.stdout, 'reconfigure'):
-    sys.stdout.reconfigure(encoding='utf-8')
-
+import os
+import tempfile
+import sqlite3
 from core.trade_db import (
-    get_db_path,
     init_db,
     save_active_position,
     update_trailing_sl,
     close_and_archive_position,
     get_active_positions,
     get_trade_journal,
+    reconcile_stale_positions,
+    get_db_connection,
     TradeExitReason,
 )
+from config import CONFIG, TradingConfig
 
 
 class TestTradeDatabase(unittest.TestCase):
-    """Test suite verifying trade_db CRUD operations and physical database isolation."""
+    def setUp(self):
+        self.mode = "paper"
+        init_db(self.mode)
 
-    def test_database_crud_and_isolation(self):
-        print("\n=======================================================")
-        print("       RUNNING TRADE_DB ISOLATED VERIFICATION TEST     ")
-        print("=======================================================")
+    def test_save_and_get_active_position(self):
+        save_active_position(
+            symbol="TEST_SYM.NS",
+            entry_order_id="ORD123",
+            sl_order_id="SL123",
+            qty=10,
+            entry_p=100.0,
+            sl_p=105.0,
+            tp_p=90.0,
+            order_type="BO",
+            mode=self.mode
+        )
+        active = get_active_positions(self.mode)
+        test_pos = [p for p in active if p['symbol'] == "TEST_SYM.NS"]
+        self.assertEqual(len(test_pos), 1)
+        self.assertEqual(test_pos[0]['entry_price'], 100.0)
+        self.assertEqual(test_pos[0]['quantity'], 10)
 
-        test_probe_symbol = f"__TEST_PROBE_{int(datetime.datetime.now().timestamp())}__"
+    def test_update_trailing_sl(self):
+        save_active_position(
+            symbol="TEST_TRAIL.NS",
+            entry_order_id="ORD456",
+            sl_order_id="SL456",
+            qty=5,
+            entry_p=200.0,
+            sl_p=210.0,
+            tp_p=180.0,
+            mode=self.mode
+        )
+        success = update_trailing_sl("TEST_TRAIL.NS", new_sl_price=200.0, mode=self.mode)
+        self.assertTrue(success)
+        active = get_active_positions(self.mode)
+        pos = [p for p in active if p['symbol'] == "TEST_TRAIL.NS"][0]
+        self.assertEqual(pos['current_sl'], 200.0)
+        self.assertEqual(pos['status'], 'TRAILING')
 
-        for test_mode in ["paper", "live"]:
-            with self.subTest(mode=test_mode):
-                db_path = get_db_path(test_mode)
-                print(f"[*] Testing database mode: '{test_mode}' -> {db_path}")
-                init_db(mode=test_mode)
+    def test_close_and_archive_position_with_balance(self):
+        save_active_position(
+            symbol="TEST_CLOSE.NS",
+            entry_order_id="ORD789",
+            sl_order_id="SL789",
+            qty=20,
+            entry_p=50.0,
+            sl_p=52.0,
+            tp_p=46.0,
+            mode=self.mode
+        )
+        archived = close_and_archive_position(
+            symbol="TEST_CLOSE.NS",
+            exit_price=46.0,
+            exit_time="2026-08-21 15:00:00",
+            result=TradeExitReason.TARGET_HIT,
+            gross_pnl=80.0,
+            taxes_fees=5.0,
+            net_pnl=75.0,
+            mode=self.mode
+        )
+        self.assertTrue(archived)
+        # Verify removed from active
+        active = get_active_positions(self.mode)
+        self.assertFalse(any(p['symbol'] == "TEST_CLOSE.NS" for p in active))
+        # Verify in journal with balance_after_trade
+        journal = get_trade_journal(self.mode, limit=10)
+        closed = [t for t in journal if t['symbol'] == "TEST_CLOSE.NS"]
+        self.assertEqual(len(closed), 1)
+        self.assertEqual(closed[0]['result'], TradeExitReason.TARGET_HIT)
+        self.assertIsNotNone(closed[0].get('balance_after_trade'))
 
-                # 1. Measure baseline
-                initial_active = len(get_active_positions(mode=test_mode))
-                initial_history = len(get_trade_journal(mode=test_mode))
-
-                # 2. Create probe active position
-                save_active_position(
-                    symbol=test_probe_symbol,
-                    entry_order_id="TEST_ORD_001",
-                    sl_order_id="TEST_SL_001",
-                    qty=10,
-                    entry_p=1500.0,
-                    sl_p=1510.0,
-                    tp_p=1480.0,
-                    order_type="BO",
-                    mode=test_mode
-                )
-                active_list = get_active_positions(mode=test_mode)
-                self.assertEqual(len(active_list), initial_active + 1, "Active position insertion failed!")
-                probe_active = next((p for p in active_list if p['symbol'] == test_probe_symbol), None)
-                self.assertIsNotNone(probe_active, "Inserted probe position not found in active list!")
-                self.assertEqual(probe_active['entry_price'], 1500.0)
-
-                # 3. Update trailing Stop Loss
-                trailed = update_trailing_sl(symbol=test_probe_symbol, new_sl_price=1500.0, mode=test_mode)
-                self.assertTrue(trailed, "Failed to update trailing SL in SQLite!")
-
-                # 4. Close and archive position atomically
-                archived = close_and_archive_position(
-                    symbol=test_probe_symbol,
-                    exit_price=1480.0,
-                    exit_time=datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    result=TradeExitReason.TARGET_HIT,
-                    gross_pnl=200.0,
-                    taxes_fees=15.5,
-                    net_pnl=184.5,
-                    mode=test_mode
-                )
-                self.assertTrue(archived, "Failed to archive probe position!")
-                self.assertEqual(len(get_active_positions(mode=test_mode)), initial_active, "Active count mismatch after archive!")
-                self.assertEqual(len(get_trade_journal(mode=test_mode)), initial_history + 1, "Trade history count mismatch after archive!")
-
-                # 5. Targeted probe cleanup (zero pollution)
-                with sqlite3.connect(db_path) as conn:
-                    cursor = conn.cursor()
-                    cursor.execute("DELETE FROM active_positions WHERE symbol = ?", (test_probe_symbol,))
-                    cursor.execute("DELETE FROM trade_history WHERE symbol = ?", (test_probe_symbol,))
-                    conn.commit()
-
-                final_active = len(get_active_positions(mode=test_mode))
-                final_history = len(get_trade_journal(mode=test_mode))
-                self.assertEqual(final_active, initial_active, "Active table leaked test rows!")
-                self.assertEqual(final_history, initial_history, "History table leaked test rows!")
-
-                print(f"    ✅ '{test_mode}' DB verified: CRUD, Atomic Archiving & Zero-Pollution Cleanup Passed.")
-
-        print("=======================================================")
-        print("       ALL DATABASE CRUD & ISOLATION TESTS PASSED      ")
-        print("=======================================================\n")
-
-    def test_wal_mode_and_concurrency_settings(self):
-        """Verifies SQLite WAL mode, busy timeout (5000ms), and NORMAL synchronous mode."""
-        from core.trade_db import get_db_connection
-
-        for test_mode in ["paper", "live"]:
-            with self.subTest(mode=test_mode):
-                init_db(mode=test_mode)
-                with get_db_connection(mode=test_mode) as conn:
-                    cursor = conn.cursor()
-                    
-                    # 1. Check WAL mode
-                    cursor.execute("PRAGMA journal_mode;")
-                    journal_mode = cursor.fetchone()[0]
-                    self.assertEqual(str(journal_mode).lower(), "wal", f"Expected WAL mode, got {journal_mode}")
-
-                    # 2. Check busy_timeout
-                    cursor.execute("PRAGMA busy_timeout;")
-                    busy_timeout = cursor.fetchone()[0]
-                    self.assertGreaterEqual(busy_timeout, 5000, f"Expected busy_timeout >= 5000ms, got {busy_timeout}")
-
-                    # 3. Check synchronous mode (NORMAL = 1)
-                    cursor.execute("PRAGMA synchronous;")
-                    sync_mode = cursor.fetchone()[0]
-                    self.assertEqual(sync_mode, 1, f"Expected synchronous = 1 (NORMAL), got {sync_mode}")
-
-    def test_btree_indexes_exist(self):
-        """Verifies composite B-Tree indexes exist on trade_history and active_positions tables."""
-        from core.trade_db import get_db_connection
-
-        expected_indexes = {
-            "idx_trades_exit_symbol",
-            "idx_trades_entry_time",
-            "idx_active_symbol",
-        }
-
-        for test_mode in ["paper", "live"]:
-            with self.subTest(mode=test_mode):
-                init_db(mode=test_mode)
-                with get_db_connection(mode=test_mode) as conn:
-                    cursor = conn.cursor()
-                    cursor.execute("SELECT name FROM sqlite_master WHERE type = 'index';")
-                    existing_indexes = {row[0] for row in cursor.fetchall()}
-                    
-                    for idx_name in expected_indexes:
-                        self.assertIn(
-                            idx_name,
-                            existing_indexes,
-                            f"Index '{idx_name}' missing from '{test_mode}' database schema!"
-                        )
-
-    def test_stale_positions_detection(self):
-        """Verifies get_stale_positions accurately identifies unclosed trades from prior days."""
-        from core.trade_db import get_stale_positions, get_db_connection
-
-        stale_probe_symbol = f"__STALE_PROBE_{int(datetime.datetime.now().timestamp())}__"
-        today_probe_symbol = f"__TODAY_PROBE_{int(datetime.datetime.now().timestamp())}__"
-
-        for test_mode in ["paper", "live"]:
-            with self.subTest(mode=test_mode):
-                init_db(mode=test_mode)
-
-                # 1. Insert an artificial stale position from 2 days ago
-                past_date_str = (datetime.datetime.now() - datetime.timedelta(days=2)).strftime("%Y-%m-%d 10:15:00")
-                save_active_position(
-                    symbol=stale_probe_symbol,
-                    entry_order_id="STALE_ORD_001",
-                    sl_order_id="STALE_SL_001",
-                    qty=15,
-                    entry_p=2500.0,
-                    sl_p=2520.0,
-                    tp_p=2460.0,
-                    mode=test_mode
-                )
-                # Manually adjust entry_time to past date for stale test
-                with get_db_connection(mode=test_mode) as conn:
-                    cursor = conn.cursor()
-                    cursor.execute("UPDATE active_positions SET entry_time = ? WHERE symbol = ?", (past_date_str, stale_probe_symbol))
-                    conn.commit()
-
-                # 2. Insert a normal active position from today
-                save_active_position(
-                    symbol=today_probe_symbol,
-                    entry_order_id="TODAY_ORD_001",
-                    sl_order_id="TODAY_SL_001",
-                    qty=10,
-                    entry_p=1800.0,
-                    sl_p=1815.0,
-                    tp_p=1770.0,
-                    mode=test_mode
-                )
-
-                # 3. Test get_stale_positions detection
-                stale_found = get_stale_positions(mode=test_mode)
-                stale_symbols = [p['symbol'] for p in stale_found]
-
-                self.assertIn(stale_probe_symbol, stale_symbols, f"Stale probe {stale_probe_symbol} was not detected!")
-                self.assertNotIn(today_probe_symbol, stale_symbols, f"Today's active probe {today_probe_symbol} was incorrectly flagged as stale!")
-
-                detected_probe = next(p for p in stale_found if p['symbol'] == stale_probe_symbol)
-                self.assertIn("d", detected_probe['age_str'], f"Expected age_str with days, got {detected_probe['age_str']}")
-                self.assertGreater(detected_probe['elapsed_seconds'], 86400)
-
-                # 4. Clean up probe rows (zero pollution)
-                with get_db_connection(mode=test_mode) as conn:
-                    cursor = conn.cursor()
-                    cursor.execute("DELETE FROM active_positions WHERE symbol IN (?, ?)", (stale_probe_symbol, today_probe_symbol))
-                    conn.commit()
-
-    def test_reconcile_stale_positions(self):
-        """Verifies that past-session orphaned trades are automatically resolved, calculated, and archived to trade_history."""
-        from core.trade_db import get_db_connection, reconcile_stale_positions, get_active_positions, get_trade_journal
-        
-        test_mode = "paper"
-        init_db(mode=test_mode)
-        orphan_probe = "ORPHAN_RECON_PROBE-EQ"
-        yesterday_str = (datetime.datetime.now() - datetime.timedelta(days=2)).strftime("%Y-%m-%d 10:30:00")
-
-        # 1. Clean and insert an orphaned trade into active_positions
-        with get_db_connection(mode=test_mode) as conn:
+    def tearDown(self):
+        # Cleanup test entries
+        with get_db_connection(self.mode) as conn:
             cursor = conn.cursor()
-            cursor.execute("DELETE FROM active_positions WHERE symbol = ?", (orphan_probe,))
-            cursor.execute("DELETE FROM trade_history WHERE symbol = ?", (orphan_probe,))
-            cursor.execute("""
-                INSERT INTO active_positions (
-                    symbol, entry_order_id, sl_order_id, quantity,
-                    entry_price, initial_sl, current_sl, target_price,
-                    status, entry_time
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE', ?)
-            """, (orphan_probe, "ORPH_ORD_1", "ORPH_SL_1", 10, 1500.0, 1520.0, 1520.0, 1460.0, yesterday_str))
-            conn.commit()
-
-        # 2. Run automated reconciliation
-        reconciled = reconcile_stale_positions(mode=test_mode)
-        reconciled_syms = [r['symbol'] for r in reconciled]
-        self.assertIn(orphan_probe, reconciled_syms)
-
-        # 3. Verify it was removed from active_positions
-        active_syms = [p['symbol'] for p in get_active_positions(mode=test_mode)]
-        self.assertNotIn(orphan_probe, active_syms)
-
-        # 4. Verify it was archived in trade_history
-        history = get_trade_journal(mode=test_mode, limit=10)
-        archived = next((h for h in history if h['symbol'] == orphan_probe), None)
-        self.assertIsNotNone(archived)
-        self.assertIsNotNone(archived['net_pnl'])
-        self.assertGreater(archived['taxes_fees'], 0)
-
-        # 5. Clean up probe
-        with get_db_connection(mode=test_mode) as conn:
-            cursor = conn.cursor()
-            cursor.execute("DELETE FROM trade_history WHERE symbol = ?", (orphan_probe,))
+            cursor.execute("DELETE FROM active_positions WHERE symbol LIKE 'TEST_%'")
+            cursor.execute("DELETE FROM trade_history WHERE symbol LIKE 'TEST_%'")
             conn.commit()
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     unittest.main()

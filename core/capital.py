@@ -82,9 +82,18 @@ def get_persisted_paper_capital(
         Current real-time accumulated capital balance in INR.
     """
     try:
-        from core.trade_db import get_trade_journal
-        trades = get_trade_journal(mode=mode)
-        cumulative_net_pnl = sum(t.get("net_pnl", 0.0) for t in trades)
-        return initial_capital + cumulative_net_pnl
+        from core.trade_db import get_db_connection, init_db
+        init_db(mode)
+        with get_db_connection(mode) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT balance_after_trade FROM trade_history ORDER BY id DESC LIMIT 1;")
+            row = cursor.fetchone()
+            if row and row[0] is not None:
+                return float(row[0])
+            cursor.execute("SELECT SUM(net_pnl) FROM trade_history;")
+            cum_sum = cursor.fetchone()[0]
+            if cum_sum is not None:
+                return initial_capital + float(cum_sum)
+        return initial_capital
     except Exception:
         return initial_capital

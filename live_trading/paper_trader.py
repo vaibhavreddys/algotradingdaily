@@ -178,6 +178,7 @@ class PaperTradingEngine(BaseTradingEngine):
             'result': result
         }
         self.paper_trades.append(trade_record)
+        self.virtual_balance = round(self.virtual_balance + net_pnl, 2)
         print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] 🏁 [PAPER EXIT] {symbol} @ ₹{exit_price:.2f} | Net PnL: ₹{net_pnl:+.2f} ({pnl_pct:+.2f}%) | {display_result}")
         notify_trade_exit(symbol=symbol, price=exit_price, net_pnl=net_pnl, pnl_pct=pnl_pct, reason=display_result, mode="paper", config=self.config)
         return trade_record
@@ -215,7 +216,7 @@ class PaperTradingEngine(BaseTradingEngine):
         gross_pnl = sum(t.get('gross_pnl', 0.0) for t in day_trades)
         taxes_fees = sum(t.get('taxes_fees', 0.0) for t in day_trades)
         net_pnl = sum(t.get('net_pnl', 0.0) for t in day_trades)
-        ending_balance = self.config.INITIAL_CAPITAL + net_pnl
+        ending_balance = get_persisted_paper_capital(self.config.INITIAL_CAPITAL, mode='paper')
         roi_pct = (net_pnl / self.config.INITIAL_CAPITAL) * 100
 
         print(f"Total Trades Taken   : {total_trades} ({win_count} Wins / {loss_count} Losses)")
