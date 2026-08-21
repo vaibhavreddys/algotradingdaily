@@ -20,13 +20,13 @@ An automated intraday quantitative trading execution engine and portfolio simula
 
 | Metric | Result |
 | :--- | :--- |
-| **Simulation Period** | **2026-05-27 to 2026-08-18 (58 Trading Days)** |
-| **Initial Capital** | ₹10,000.00 (Max 2 concurrent positions, 5x MIS leverage) |
-| **Total Trades Taken** | 124 (56 Wins / 68 Losses) |
-| **Win Rate** | **45.16%** |
-| **Net Realized Profit** | **+₹3,053.55 (+30.54% ROI)** *(Post-all statutory taxes & fees)* |
-| **Profit Factor / MDD** | **1.76** Profit Factor | **-9.52%** Max Drawdown |
-| **Trade Expectancy** | **+₹24.63** / trade |
+| **Simulation Period** | **2026-06-01 to 2026-08-21 (59 Trading Days)** |
+| **Initial Capital** | ₹10,000.00 (Max 2 concurrent positions, 5x MIS leverage, Dynamic Compounding) |
+| **Total Trades Taken** | 122 (56 Wins / 66 Losses) |
+| **Win Rate** | **45.90%** |
+| **Net Realized Profit** | **+₹1,920.04 (+19.20% ROI)** *(Post-all Shoonya brokerage & statutory taxes)* |
+| **Profit Factor / MDD** | **1.51** Profit Factor | **-11.81%** Max Drawdown |
+| **Trade Expectancy** | **+₹15.74** / trade |
 
 > 📊 **Multi-Timeframe Study & Broker Friction Matrix**: See [`docs/backtest_results_and_broker_matrix.md`](docs/backtest_results_and_broker_matrix.md)
 

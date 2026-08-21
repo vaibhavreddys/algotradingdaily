@@ -129,6 +129,10 @@ class LiveTradingEngine(BaseTradingEngine):
         """
         Executes Intraday Short Entry order using Bracket Order (BO default) or MIS with linked SL.
         """
+        if self.is_daily_circuit_breaker_active():
+            print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] 🚨 [CIRCUIT BREAKER] 3% Max Daily Loss reached. Rejecting entry for {symbol}.")
+            return False
+
         if len(self.active_positions) >= self.config.MAX_CONCURRENT_POSITIONS:
             print(f"⚠️ Max position slots ({self.config.MAX_CONCURRENT_POSITIONS}) full. Rejecting entry for {symbol}.")
             return False

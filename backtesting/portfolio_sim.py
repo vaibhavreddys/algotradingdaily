@@ -30,6 +30,7 @@ if hasattr(sys.stdout, 'reconfigure'):
 
 from core.charges import calculate_charges
 from core.capital import get_slot_margin, get_slot_exposure
+from core.risk import is_daily_loss_limit_reached
 from config import CONFIG, TradingConfig
 from data_pipeline import get_nifty50_symbols, fetch_nifty_benchmark, load_candle_data
 from strategies.vwap_stoch_breakdown import (
@@ -123,10 +124,29 @@ def simulate_portfolio_execution(signals_df: pd.DataFrame, config: TradingConfig
     executed_trades = []
     total_charges_paid = 0.0
 
+    current_sim_day = None
+    day_starting_capital = capital
+    day_realized_pnl = 0.0
+
     if not signals_df.empty:
         for _, sig in signals_df.iterrows():
-            # Release slots that closed before this entry
+            sig_day = pd.to_datetime(sig['Entry Time']).date()
+
+            # Daily Session Reset
+            if sig_day != current_sim_day:
+                current_sim_day = sig_day
+                day_starting_capital = capital
+                day_realized_pnl = 0.0
+
+            # Release slots that closed before this entry and tally day realized PnL
+            for t in active_trades:
+                if t['Exit Time'] <= sig['Entry Time']:
+                    day_realized_pnl += t['net_pnl']
             active_trades = [t for t in active_trades if t['Exit Time'] > sig['Entry Time']]
+
+            # Enforce 3% Daily Max Portfolio Loss Circuit Breaker
+            if is_daily_loss_limit_reached(day_realized_pnl, day_starting_capital, config.MAX_DAILY_LOSS_PCT):
+                continue
 
             if len(active_trades) < config.MAX_CONCURRENT_POSITIONS:
                 # Dynamically split CURRENT accumulated capital equally across configured slots
@@ -143,14 +163,16 @@ def simulate_portfolio_execution(signals_df: pd.DataFrame, config: TradingConfig
                 net_pnl = raw_pnl - trade_cost
                 capital += net_pnl
 
-                executed_trades.append({
+                t_dict = {
                     'Symbol': sig['Symbol'], 'Entry Time': sig['Entry Time'],
                     'Exit Time': sig['Exit Time'], 'PnL %': sig['PnL %'] * 100,
                     'Slot Margin (₹)': slot_margin, 'Exposure (₹)': trade_exposure,
                     'Gross PnL (₹)': raw_pnl, 'Net PnL (₹)': net_pnl,
+                    'net_pnl': net_pnl,
                     'Capital': capital, 'Result': sig['Result']
-                })
-                active_trades.append(sig)
+                }
+                executed_trades.append(t_dict)
+                active_trades.append(t_dict)
 
     tdf = pd.DataFrame(executed_trades)
     final_slot_margin = get_slot_margin(capital, config.MAX_CONCURRENT_POSITIONS)

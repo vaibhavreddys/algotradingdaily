@@ -29,6 +29,8 @@ if hasattr(sys.stdout, 'reconfigure'):
 
 from config import CONFIG, TradingConfig
 from core.capital import get_persisted_paper_capital
+from core.risk import is_daily_loss_limit_reached
+from core.trade_db import get_today_realized_pnl
 from data_pipeline import get_nifty50_symbols
 
 
@@ -44,6 +46,18 @@ class BaseTradingEngine(NorenApi):
         )
         self.config = config
         self.active_positions: Dict[str, Dict[str, Any]] = {}
+
+    def is_daily_circuit_breaker_active(self) -> bool:
+        """
+        Checks if today's cumulative realized losses meet or exceed the 3% max daily loss limit.
+        """
+        today_pnl = get_today_realized_pnl(mode=self.config.TRADING_MODE)
+        start_cap = self.get_account_capital()
+        return is_daily_loss_limit_reached(
+            today_realized_pnl=today_pnl,
+            day_starting_capital=start_cap,
+            max_loss_pct=self.config.MAX_DAILY_LOSS_PCT
+        )
 
     def get_account_capital(self) -> float:
         """

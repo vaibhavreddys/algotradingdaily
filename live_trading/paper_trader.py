@@ -58,6 +58,10 @@ class PaperTradingEngine(BaseTradingEngine):
 
     def execute_virtual_entry(self, symbol: str, entry_price: float, sl_price: float, tp_price: float):
         """Simulates virtual entry and establishes stop loss / target in SQLite database."""
+        if self.is_daily_circuit_breaker_active():
+            print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] 🚨 [CIRCUIT BREAKER] 3% Max Daily Loss reached. Rejecting entry for {symbol}.")
+            return
+
         if len(self.active_positions) >= self.config.MAX_CONCURRENT_POSITIONS:
             return
 
@@ -261,6 +265,10 @@ class PaperTradingEngine(BaseTradingEngine):
         """
         Scans the Nifty 50 universe at 15m candle close and triggers virtual entries if open slots exist.
         """
+        if self.is_daily_circuit_breaker_active():
+            print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] 🚨 [CIRCUIT BREAKER] 3% Max Daily Loss reached. Rejecting entry for {symbol}.")
+            return
+
         if len(self.active_positions) >= self.config.MAX_CONCURRENT_POSITIONS:
             return
 

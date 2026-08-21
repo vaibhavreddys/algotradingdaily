@@ -16,10 +16,16 @@ from .trade_db import (
     close_and_archive_position,
     get_active_positions,
     get_trade_journal,
+    get_today_realized_pnl,
     get_stale_positions,
     reconcile_stale_positions,
     TradeExitReason,
     EXIT_DISPLAY_LABELS,
+)
+from .risk import (
+    calculate_stop_and_target,
+    is_daily_loss_limit_reached,
+    should_trail_to_breakeven,
 )
 from .capital import (
     get_slot_margin,
@@ -42,6 +48,7 @@ __all__ = [
     'close_and_archive_position',
     'get_active_positions',
     'get_trade_journal',
+    'get_today_realized_pnl',
     'get_stale_positions',
     'reconcile_stale_positions',
     'TradeExitReason',
@@ -50,4 +57,7 @@ __all__ = [
     'get_slot_exposure',
     'calculate_order_quantity',
     'get_persisted_paper_capital',
+    'calculate_stop_and_target',
+    'is_daily_loss_limit_reached',
+    'should_trail_to_breakeven',
 ]

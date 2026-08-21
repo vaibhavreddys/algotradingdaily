@@ -43,13 +43,16 @@ A short entry signal triggers on the close of a 15-minute candle if and only if 
 
 ## 🛡️ Risk Management & Position Sizing
 
-### 1. Capital Allocation & Concurrency
+### 1. Dynamic Capital Sizing & Equal Split Compounding
 * **Baseline Capital**: ₹10,000
-* **Max Concurrent Positions**: 2 open slots
-* **Per-Trade Margin**: $\frac{\text{Initial Capital}}{\text{Max Slots}} = \frac{₹10,000}{2} = ₹5,000$
-* **Exposure with 5x MIS Leverage**: $₹5,000 \times 5 = ₹25,000$
+* **Max Concurrent Positions**: Configurable (Default: 2 open slots)
+* **Dynamic Slot Margin**: $\text{Slot Margin} = \frac{\text{Current Account Capital}}{\text{Max Concurrent Slots}}$
+* **Exposure with 5x MIS Leverage**: $\text{Exposure} = \text{Slot Margin} \times \text{LEVERAGE\_MIS (5x)}$
 * **Quantity Sizing**:
-  $$\text{Quantity} = \max\left(1, \left\lfloor \frac{₹25,000}{\text{Entry Price}} \right\rfloor\right)$$
+  $$\text{Quantity} = \max\left(1, \left\lfloor \frac{\text{Dynamic Exposure}}{\text{Entry Price}} \right\rfloor\right)$$
+
+### 2. 4% Daily Portfolio Loss Circuit Breaker
+* **Rule**: If today's cumulative realized net PnL reaches $-4.0\%$ of morning opening capital, the trading daemon halts all new entries for the remainder of the session to protect against hostile whipsaw days.
 
 ### 2. Stop Loss & Target Calculation
 * **Swing High Lookback**: 3-bar high lookback before entry candle.

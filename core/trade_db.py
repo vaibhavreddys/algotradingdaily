@@ -492,3 +492,21 @@ if __name__ == "__main__":
     print("STATUS: ✅ Both SQLite databases initialized and ready (WAL Mode & 5000ms Busy Timeout Enabled).")
     print("TIP   : Run 'python -m unittest tests/test_trade_db.py' for full test suite.")
     print("=======================================================\n")
+
+
+def get_today_realized_pnl(mode: str = "paper") -> float:
+    """
+    Queries the SQLite trade_history table and returns the sum of today's realized net PnL in INR.
+    """
+    init_db(mode)
+    today_prefix = datetime.datetime.now().strftime("%Y-%m-%d")
+    with get_db_connection(mode) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT SUM(net_pnl) FROM trade_history WHERE exit_time LIKE ?;",
+            (f"{today_prefix}%",)
+        )
+        row = cursor.fetchone()
+        if row and row[0] is not None:
+            return float(row[0])
+    return 0.0
