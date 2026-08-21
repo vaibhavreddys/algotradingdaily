@@ -84,6 +84,14 @@ class BaseTradingEngine(NorenApi):
         self.config = config
         self.active_positions: Dict[str, Dict[str, Any]] = {}
 
+        self.cached_nifty_benchmark: Optional[Any] = None
+        self.user = os.getenv("SHOONYA_USER")
+        self.pwd = os.getenv("SHOONYA_PWD")
+        self.api_key = os.getenv("SHOONYA_API_KEY")
+        self.vendor_code = os.getenv("SHOONYA_VENDOR_CODE")
+        self.totp_key = os.getenv("SHOONYA_TOTP_KEY")
+        self.imei = os.getenv("SHOONYA_IMEI", "shoonya_algo_desktop")
+
     def is_daily_circuit_breaker_active(self) -> bool:
         """
         Checks if today's cumulative realized losses meet or exceed the 3% max daily loss limit.
@@ -115,14 +123,6 @@ class BaseTradingEngine(NorenApi):
             except Exception as e:
                 print(f"⚠️ Failed to fetch live broker limits ({e}). Falling back to default.")
         return get_persisted_paper_capital(initial_capital=self.config.INITIAL_CAPITAL, mode=self.config.TRADING_MODE)
-
-        self.cached_nifty_benchmark: Optional[Any] = None
-        self.user = os.getenv("SHOONYA_USER")
-        self.pwd = os.getenv("SHOONYA_PWD")
-        self.api_key = os.getenv("SHOONYA_API_KEY")
-        self.vendor_code = os.getenv("SHOONYA_VENDOR_CODE")
-        self.totp_key = os.getenv("SHOONYA_TOTP_KEY")
-        self.imei = os.getenv("SHOONYA_IMEI", "shoonya_algo_desktop")
 
     def prewarm_benchmark_feed(self) -> bool:
         """
