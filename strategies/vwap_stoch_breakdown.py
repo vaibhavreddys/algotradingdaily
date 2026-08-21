@@ -20,7 +20,7 @@ Strategy Rules:
 import pandas as pd
 from typing import Optional, Dict, Any
 from config import CONFIG, TradingConfig
-from core.indicators import add_stoch_rsi, add_adx, add_vwap, add_relative_weakness
+from core.indicators import compute_stoch_rsi, compute_adx, compute_vwap, compute_relative_weakness
 from core.trade_db import TradeExitReason
 
 STRATEGY_NAME = "VWAP-Stoch Breakdown"
@@ -43,15 +43,15 @@ def evaluate_signals(
         df.columns = df.columns.get_level_values(0)
 
     # 1. Compute Required Indicators
-    df = add_stoch_rsi(df)
-    df = add_adx(df)
-    df = add_vwap(df)
+    df = compute_stoch_rsi(df)
+    df = compute_adx(df)
+    df = compute_vwap(df)
 
     if 'Stoch_K' not in df.columns or 'ADX' not in df.columns or 'VWAP' not in df.columns:
         return None
 
     # 2. Add Relative Weakness Filter
-    df = add_relative_weakness(df, nifty_pct_map)
+    df = compute_relative_weakness(df, nifty_pct_map)
 
     # 3. Time Filter: Configurable Entry Window (Default: 10:00 AM to 1:30 PM IST)
     time_filter = (
