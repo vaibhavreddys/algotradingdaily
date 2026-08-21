@@ -166,6 +166,7 @@ def fetch_stock_candles(
     interval: str = "15m",
     use_cache: bool = False,
     force_refresh: bool = False,
+    verbose: bool = False,
 ) -> Optional[pd.DataFrame]:
     """
     Backward-compatible alias for load_candle_data.
@@ -177,6 +178,7 @@ def fetch_stock_candles(
         period=period,
         interval=interval,
         force_refresh=force_refresh or (not use_cache),
+        verbose=verbose,
     )
 
 
@@ -185,17 +187,19 @@ def fetch_verified_candles(
     period: str = "5d",
     interval: str = "15m",
     retry_delays: tuple = (0, 3, 5, 7),
+    verbose: bool = False,
 ) -> Optional[pd.DataFrame]:
     """
     Ingests live candle data with resilient multi-attempt retry (0s, 3s, 5s, 7s)
     to handle public CDN propagation lag at exact candle boundaries.
+    Silences noisy download logs by default during live scanning.
     """
     import time
     for delay in retry_delays:
         if delay > 0:
             time.sleep(delay)
         try:
-            df = fetch_stock_candles(ticker, period=period, interval=interval, force_refresh=True)
+            df = fetch_stock_candles(ticker, period=period, interval=interval, force_refresh=True, verbose=verbose)
             if df is not None and not df.empty and len(df) >= 30:
                 return df
         except Exception:
