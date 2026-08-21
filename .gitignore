@@ -24,6 +24,7 @@ __pycache__/
 # Market Data Archives (Disposable Cache)
 market_data/*
 !market_data/.gitkeep
+market_data/openalgo/
 
 # Database State & Journals
 database/*

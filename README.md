@@ -63,7 +63,9 @@ algotradingdaily/
 ├── strategies/            # Modular strategy definitions & signal extractors
 │
 ├── data_pipeline/         # Market data gateway & high-frequency tick caching
-│   └── data_feed.py       # Smart local caching, silent scans & live tick fetcher
+│   ├── data_feed.py       # Smart local caching, silent scans & live tick fetcher
+│   └── openalgo_ingestion/# Isolated OpenAlgo 1m downloader and DuckDB reader
+
 │
 ├── backtesting/           # Historical simulation & scanning engines
 │   ├── portfolio_sim.py   # Chronological multi-stock portfolio simulator with compounding
@@ -120,6 +122,81 @@ cp .env.example .env
 python backtesting/portfolio_sim.py
 ```
 
+### Download OpenAlgo historical 1-minute candles
+
+The optional OpenAlgo ingestion subsystem maintains its own DuckDB data store under
+`market_data/openalgo/`; it does not alter the yfinance CSV cache or current backtests.
+Configure `OPENALGO_HOST` and `OPENALGO_API_KEY` in `.env`, install the project
+requirements, then run either equivalent command:
+
+```bash
+# Verify live NSE constituent access
+python -m data_pipeline.openalgo_ingestion --action scrape
+
+# One completed day / one stock smoke test
+python -m data_pipeline.openalgo_ingestion --action download \
+  --symbols RELIANCE --start-date 2026-08-20 --end-date 2026-08-20
+
+# Root-level compatibility launcher
+python openalgo_ingest.py --action read
+```
+
+For larger loads, use `--index NIFTY200 --days 365`; downloads are split into
+broker-safe 30-day chunks. Successful chunks are skipped on a subsequent identical
+run, while failed chunks are retried on the next run. Set
+`OPENALGO_SHOONYA_APPEND_EQ=true` only if the connected broker requires `-EQ`
+symbols. The stored data is available to research code through:
+
+```python
+from data_pipeline.openalgo_ingestion import BacktestDataReader
+
+frame = BacktestDataReader().get_full_dataframe(symbol="RELIANCE")
+close_matrix = BacktestDataReader().get_vectorbt_matrix()
+```
+
+### Data integrity & maintenance
+
+**Volume sanitation (automatic).** Some broker feeds emit closing-auction
+correction trades as negative volumes near 15:20 IST. The downloader clips
+every incoming candle to `volume >= 0` before persisting, so the artifact
+cannot enter the store again.
+
+**Health check.** Run before backtests or after large downloads; exits `0`
+when healthy, `1` when issues are found (cron-friendly):
+
+```bash
+python openalgo_ingest.py --action health
+```
+
+It verifies DuckDB connectivity, NULL/negative prices, NULL/negative
+volumes, inverted high/low rows, duplicate candles, per-symbol coverage,
+and chunk-state accounting from `download_state.sqlite`.
+
+**Aggregates & archive.** Aggregates (`ohlcv_5m/15m/1h/1d`) are snapshots of
+`ohlcv_1m` at build time — always rerun after new downloads:
+
+```bash
+python openalgo_ingest.py --action aggregate   # rebuild all timeframe tables
+python openalgo_ingest.py --action archive     # export Parquet partitioned by year/month
+```
+
+Timeframe buckets are aligned to IST wall-clock boundaries (hourly buckets at
+:00, daily candles stamped 00:00 IST) regardless of server timezone.
+
+**Backup / restore.** Before any manual surgery on the store:
+
+```bash
+mkdir -p market_data/openalgo/backup
+python -c "from data_pipeline.openalgo_ingestion import archive; archive.checkpoint()"
+cp market_data/openalgo/backtest_data.duckdb market_data/openalgo/backup/backtest_data_pre_cleanup.duckdb
+# restore = copy the backup file back over backtest_data.duckdb, then rerun --action aggregate
+```
+
+> **Historical note (2026-08-22):** 5,630 negative-volume rows (184 symbols)
+> were found in the initial 365-day download and zeroed in place; aggregates
+> were rebuilt from the cleaned store. The pre-cleanup snapshot is preserved
+> at `market_data/openalgo/backup/backtest_data_pre_cleanup.duckdb`.
+
 ### Run Live Paper Trading Daemon:
 ```bash
 python live_trading/paper_trader.py
@@ -129,3 +206,50 @@ python live_trading/paper_trader.py
 ```bash
 python -m unittest discover tests
 ```
+
+## 🗓️ Monthly Maintenance Routine
+
+To keep your historical database fresh, optimized, and backed up, run this routine on the **1st of every month** (or after market hours on the last trading day of the month). 
+
+Because the downloader tracks state in SQLite, it is completely idempotent—it will instantly skip previously downloaded history and only fetch the new month's data.
+
+### Step 1: Download the New Month's Data
+Run your standard lookback command. The engine will check the SQLite state DB, skip the past 11 months, and only request the new month's 1-minute candles from the broker.
+```bash
+python openalgo_ingest.py --action download --index NIFTY200 --days 365
+```
+
+#### Download the entire previous year (e.g., 2025)
+```
+python openalgo_ingest.py --action download --index NIFTY200 --start-date 2025-01-01 --end-date 2025-12-31
+```
+
+#### Download a specific month in the past
+```
+python openalgo_ingest.py --action download --index NIFTY200 --start-date 2025-06-01 --end-date 2025-06-30
+```
+
+#### Download a custom multi-year range
+```
+python openalgo_ingest.py --action download --index NIFTY200 --start-date 2024-01-01 --end-date 2025-12-31
+```
+
+### Step 2: Rebuild Timeframe Aggregates
+Once the new 1-minute data is in DuckDB, regenerate your 5m, 15m, 1h, and 1d tables. This ensures your multi-year backtests can use the new data without querying the heavy 1-minute table.
+```bash
+python openalgo_ingest.py --action aggregate
+```
+
+### Step 3: Update the Parquet Archive (Cold Storage)
+Export the updated DuckDB database to your compressed, partitioned Parquet archive. This serves as your disaster recovery backup and keeps your long-term storage highly optimized.
+```bash
+python openalgo_ingest.py --action archive
+```
+
+### Step 4: Verify Data Integrity (Optional)
+Check the database stats to ensure the row count increased and there are no missing months.
+```bash
+python openalgo_ingest.py --action stats
+```
+
+> **Pro-Tip for Deep History:** If you want to backtest over 5 years, remember that most brokers restrict 1-minute data to the last 60-90 days. For deep history, temporarily change `INTERVAL = "1D"` or `"1H"` in `settings.py` and run the download command with `--days 1825` (5 years).
