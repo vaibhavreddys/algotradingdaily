@@ -202,65 +202,17 @@ class PaperTradingEngine(BaseTradingEngine):
         # Filter trades for today's session
         day_trades = [t for t in all_trades if str(t.get('exit_time', '')).startswith(today_date)]
 
-        print("\n=====================================================")
-        print("         DAILY EOD PERFORMANCE REPORT (PAPER TRADING)")
-        print("=====================================================")
-        print(f"Date                 : {today_date}")
-        print(f"Initial Balance      : ₹{self.config.INITIAL_CAPITAL:,.2f}")
-
+        from core.report import print_daily_eod_report
+        ending_balance = get_persisted_paper_capital(self.config.INITIAL_CAPITAL, mode='paper')
+        eod_msg, trade_lines = print_daily_eod_report(
+            day_trades=day_trades,
+            initial_capital=self.config.INITIAL_CAPITAL,
+            ending_balance=ending_balance,
+            date_str=today_date
+        )
         if not day_trades:
-            print("Total Trades Taken   : 0 (No trades recorded for this date)")
-            print("=====================================================\n")
             return
 
-        total_trades = len(day_trades)
-        winning_trades = [t for t in day_trades if t.get('net_pnl', 0) > 0]
-        losing_trades = [t for t in day_trades if t.get('net_pnl', 0) <= 0]
-        win_count = len(winning_trades)
-        loss_count = len(losing_trades)
-        win_rate = (win_count / total_trades) * 100 if total_trades > 0 else 0.0
-
-        gross_pnl = sum(t.get('gross_pnl', 0.0) for t in day_trades)
-        taxes_fees = sum(t.get('taxes_fees', 0.0) for t in day_trades)
-        net_pnl = sum(t.get('net_pnl', 0.0) for t in day_trades)
-        ending_balance = get_persisted_paper_capital(self.config.INITIAL_CAPITAL, mode='paper')
-        roi_pct = (net_pnl / self.config.INITIAL_CAPITAL) * 100
-
-        print(f"Total Trades Taken   : {total_trades} ({win_count} Wins / {loss_count} Losses)")
-        print(f"Win Rate             : {win_rate:.1f}%")
-        print("-----------------------------------------------------")
-        print(f"Gross Realized PnL   : {'+' if gross_pnl >= 0 else '-'}₹{abs(gross_pnl):,.2f}")
-        print(f"Simulated Taxes/Fees : -₹{taxes_fees:,.2f}")
-        print(f"Net Realized PnL     : {'+' if net_pnl >= 0 else '-'}₹{abs(net_pnl):,.2f} (Post-All Charges)")
-        print(f"Ending Balance       : ₹{ending_balance:,.2f} ({'+' if roi_pct >= 0 else ''}{roi_pct:.2f}% Daily ROI)")
-        print("=====================================================")
-        print("Trade Log:")
-        trade_lines = []
-        from core.trade_db import EXIT_DISPLAY_LABELS
-        for idx, t in enumerate(day_trades, 1):
-            sym = t.get('symbol', 'UNKNOWN')
-            ep = t.get('entry_price', 0.0)
-            xp = t.get('exit_price', 0.0)
-            raw_res = t.get('result', '')
-            res = EXIT_DISPLAY_LABELS.get(raw_res, raw_res)
-            npnl = t.get('net_pnl', 0.0)
-            line = f"{idx}. {sym:<14}: SHORT @ ₹{ep:,.2f} -> {res} @ ₹{xp:,.2f} | Net: {'+' if npnl >= 0 else '-'}₹{abs(npnl):,.2f}"
-            trade_lines.append(line)
-            print(line)
-        print("=====================================================")
-        print("STATUS: 🏁 All positions squared off. Session closed.")
-        print("=====================================================\n")
-
-        # Broadcast summary to Telegram & configured alert channels
-        eod_msg = (
-            f"Date: {today_date}\n"
-            f"Trades: {total_trades} ({win_count}W / {loss_count}L) | Win Rate: {win_rate:.1f}%\n"
-            f"Gross PnL: {'+' if gross_pnl >= 0 else '-'}₹{abs(gross_pnl):,.2f}\n"
-            f"Taxes/Fees: -₹{taxes_fees:,.2f}\n"
-            f"Net PnL: {'+' if net_pnl >= 0 else '-'}₹{abs(net_pnl):,.2f} ({roi_pct:+.2f}% ROI)\n"
-            f"Ending Balance: ₹{ending_balance:,.2f}\n\n"
-            f"Trade Log:\n" + "\n".join(trade_lines)
-        )
         notify_eod_summary(report_text=eod_msg, mode="paper", config=self.config)
 
 

@@ -63,3 +63,10 @@ __all__ = [
     'is_daily_loss_limit_reached',
     'should_trail_to_breakeven',
 ]
+
+from .report import (
+    format_outcome_distribution,
+    print_simulation_report,
+    print_multi_broker_matrix,
+    print_daily_eod_report
+)

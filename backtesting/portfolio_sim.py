@@ -224,101 +224,28 @@ def print_simulation_report(
     peak_at_trough = running_peak.loc[trough_idx] if not drawdown_series.empty else initial_capital
     mdd_pct = (mdd_val / peak_at_trough) * 100 if peak_at_trough > 0 else 0.0
 
-    # Trade Expectancy & Averages
-    expectancy = net_profit / total_trades if total_trades > 0 else 0.0
-    avg_win = gross_gains / win_count if win_count > 0 else 0.0
-    avg_loss = gross_losses / loss_count if loss_count > 0 else 0.0
+    # Delegate Presentation & Metrics to core.report layer (Issue #14)
+    from core.report import print_simulation_report, print_multi_broker_matrix
 
-    # Streak & Runup Metrics
-    largest_win = tdf['Net PnL (₹)'].max() if not tdf.empty else 0.0
-    largest_loss = tdf['Net PnL (₹)'].min() if not tdf.empty else 0.0
+    print_simulation_report(
+        tdf=tdf,
+        initial_capital=initial_capital,
+        ending_capital=ending_capital,
+        gross_profit=gross_profit,
+        total_charges=total_charges,
+        net_profit=net_profit,
+        start_date=start_date,
+        end_date=end_date,
+        trading_days=trading_days,
+        config=config,
+        strategy_name=STRATEGY_NAME
+    )
 
-    cur_win_streak = 0
-    max_win_streak = 0
-    cur_loss_streak = 0
-    max_loss_streak = 0
-
-    if not tdf.empty:
-        for pnl in tdf['Net PnL (₹)']:
-            if pnl > 0:
-                cur_win_streak += 1
-                cur_loss_streak = 0
-                if cur_win_streak > max_win_streak:
-                    max_win_streak = cur_win_streak
-            else:
-                cur_loss_streak += 1
-                cur_win_streak = 0
-                if cur_loss_streak > max_loss_streak:
-                    max_loss_streak = cur_loss_streak
-
-    # Max Equity Runup (Trough-to-Peak Surge)
-    running_trough = tdf['Capital'].cummin() if not tdf.empty else pd.Series([initial_capital])
-    runup_series = tdf['Capital'] - running_trough if not tdf.empty else pd.Series([0.0])
-    max_runup_val = runup_series.max() if not runup_series.empty else 0.0
-    max_runup_pct = (max_runup_val / initial_capital) * 100
-
-    print("\n=======================================================")
-    print(f"      STRATEGY: {STRATEGY_NAME.upper()}")
-    print(f"      ₹{initial_capital:,.0f} CAPITAL SIMULATION (MAX {config.MAX_CONCURRENT_POSITIONS} CONCURRENT)   ")
-    print("=======================================================")
-    print("Data Source            : Local Archives (market_data/)")
-    print(f"Simulation Period      : {start_date} to {end_date} ({trading_days} Trading Days)")
-    print(f"Initial Capital        : ₹{initial_capital:,.2f}")
-    print(f"Max Simultaneous Trades: {config.MAX_CONCURRENT_POSITIONS} Positions (Equal Capital Split)")
-    print(f"Intraday MIS Leverage  : {config.LEVERAGE_MIS}x")
-    print(f"Total Trades Taken     : {total_trades}")
-    print(f"Winning Trades         : {win_count} | Losing Trades: {loss_count}")
-    print(f"Win Rate               : {win_rate:.2f}%")
-    print("-------------------------------------------------------")
-    print(f"Gross Profit (Pre-Tax) : ₹{gross_profit:,.2f} (+{gross_return_pct:.2f}%)")
-    print(f"Total Taxes & Fees     : ₹{total_charges:,.2f}")
-    print(f"Total Net Profit       : ₹{net_profit:,.2f} (Post-All Charges)")
-    print(f"Ending Capital Balance : ₹{ending_capital:,.2f}")
-    print(f"Net Return             : {net_return_pct:.2f}%")
-    print("-------------------------------------------------------")
-    print(f"Profit Factor          : {profit_factor:.2f}")
-    print(f"Max Drawdown (MDD)     : ₹{mdd_val:,.2f} (-{mdd_pct:.2f}%)")
-    print(f"Max Equity Runup       : +₹{max_runup_val:,.2f} (+{max_runup_pct:.2f}%)")
-    print(f"Win / Loss Streak      : {max_win_streak} Wins / {max_loss_streak} Losses (Max Consecutive)")
-    print(f"Largest Win / Loss     : +₹{largest_win:,.2f} / -₹{abs(largest_loss):,.2f}")
-    print(f"Trade Expectancy       : +₹{expectancy:.2f} / trade" if expectancy >= 0 else f"Trade Expectancy       : -₹{abs(expectancy):.2f} / trade")
-    print(f"Avg Win / Avg Loss     : +₹{avg_win:,.2f} / -₹{avg_loss:,.2f}")
-    print("=======================================================\n")
-    print("Outcome Distribution:")
-    from core.trade_db import EXIT_DISPLAY_LABELS
-    for result_name, count in tdf['Result'].value_counts().items():
-        pct = (count / total_trades) * 100
-        display_label = EXIT_DISPLAY_LABELS.get(result_name, str(result_name))
-        print(f"  • {display_label:<22} : {count:>3} trades ({pct:>5.1f}%)")
-
-    # Multi-Broker Friction & Net Return Comparison Matrix
-    from core.charges import BROKER_CHARGES_CONFIG
-    
-    print("\n=======================================================")
-    print("       MULTI-BROKER NET PROFIT COMPARISON MATRIX       ")
-    print("=======================================================")
-    print(f"{'Broker Schedule':<24} | {'Total Taxes/Fees':<16} | {'Net Realized PnL':<16} | {'Net ROI %':<10}")
-    print("-----------------------------------------------------------------------------")
-
-    for b_key, b_info in BROKER_CHARGES_CONFIG.items():
-        b_sim_charges = 0.0
-        b_sim_net_pnl = 0.0
-        
-        for _, row in tdf.iterrows():
-            trade_exp = row['Exposure (₹)'] if 'Exposure (₹)' in row else config.per_trade_exposure
-            s_turnover = trade_exp
-            b_turnover = trade_exp * (1.0 - (row['PnL %'] / 100.0))
-            cost = calculate_charges(s_turnover, b_turnover, broker=b_key)
-            raw = trade_exp * (row['PnL %'] / 100.0)
-            b_sim_charges += cost
-            b_sim_net_pnl += (raw - cost)
-
-        b_roi = (b_sim_net_pnl / initial_capital) * 100
-        sign = "+" if b_sim_net_pnl >= 0 else "-"
-        abs_pnl = abs(b_sim_net_pnl)
-        print(f"{b_info['name']:<24} | ₹{b_sim_charges:<15,.2f} | {sign}₹{abs_pnl:<14,.2f} | {sign}{abs(b_roi):.2f}%")
-
-    print("=======================================================\n")
+    print_multi_broker_matrix(
+        tdf=tdf,
+        initial_capital=initial_capital,
+        config=config
+    )
 
 
 def run_portfolio_simulation(config: TradingConfig = CONFIG, refresh: bool = False):

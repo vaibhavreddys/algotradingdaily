@@ -78,8 +78,8 @@ def run_strategy_scan(config: TradingConfig = CONFIG, refresh: bool = False):
     print(f"Avg Return / Trade     : {avg_trade_pnl:.3f}%")
     print(f"Cumulative Return      : {net_pnl:.2f}% (Unleveraged, Unconstrained)")
     print("=======================================================\n")
-    print("Outcome Distribution:")
-    print(tdf['Result'].value_counts())
+    from core.report import format_outcome_distribution
+    print(format_outcome_distribution(tdf['Result'].value_counts(), total))
 
 
 if __name__ == "__main__":
