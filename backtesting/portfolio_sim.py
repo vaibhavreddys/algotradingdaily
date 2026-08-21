@@ -305,11 +305,11 @@ def print_simulation_report(
         b_sim_net_pnl = 0.0
         
         for _, row in tdf.iterrows():
-            trade_exp = row.get('Exposure (₹)', config.per_trade_exposure)
+            trade_exp = row['Exposure (₹)'] if 'Exposure (₹)' in row else config.per_trade_exposure
             s_turnover = trade_exp
             b_turnover = trade_exp * (1.0 - (row['PnL %'] / 100.0))
             cost = calculate_charges(s_turnover, b_turnover, broker=b_key)
-            raw = config.per_trade_exposure * (row['PnL %'] / 100.0)
+            raw = trade_exp * (row['PnL %'] / 100.0)
             b_sim_charges += cost
             b_sim_net_pnl += (raw - cost)
 
