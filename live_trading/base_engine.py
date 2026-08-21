@@ -50,7 +50,7 @@ import sys
 import datetime
 # pyrefly: ignore [missing-import]
 import pyotp
-from typing import Dict, Any, List, Optional
+from typing import List, Dict, Any, Optional, Tuple, Iterator
 # pyrefly: ignore [missing-import]
 from NorenRestApiPy.NorenApi import NorenApi
 
@@ -173,6 +173,46 @@ class BaseTradingEngine(NorenApi):
         except Exception as e:
             print(f"⚠️ Shoonya Auth Exception ({e}). Running in Offline Virtual Mode.")
             return False
+
+    def get_seconds_until_market_open(self, now: Optional[datetime.datetime] = None) -> int:
+        """
+        Calculates exact seconds remaining until 09:15:02 AM IST market open today.
+        """
+        now = now or datetime.datetime.now()
+        open_time = now.replace(hour=9, minute=15, second=2, microsecond=0)
+        delta_sec = int((open_time - now).total_seconds())
+        return max(delta_sec, 2)
+
+    def get_seconds_until_entry_window(self, now: Optional[datetime.datetime] = None) -> int:
+        """
+        Calculates exact seconds remaining until 10:00:03 AM IST entry window open today.
+        """
+        now = now or datetime.datetime.now()
+        entry_time = now.replace(
+            hour=self.config.ENTRY_START_HOUR,
+            minute=self.config.ENTRY_START_MINUTE,
+            second=3,
+            microsecond=0
+        )
+        delta_sec = int((entry_time - now).total_seconds())
+        return max(delta_sec, 2)
+
+    def get_next_market_session(self, now: Optional[datetime.datetime] = None) -> Tuple[datetime.datetime, int]:
+        """
+        Calculates the next upcoming trading session opening (09:15:00 AM IST on next weekday).
+        Returns tuple of (next_session_datetime, seconds_remaining).
+        """
+        now = now or datetime.datetime.now()
+        candidate = now.replace(hour=9, minute=15, second=0, microsecond=0)
+        if now >= candidate:
+            candidate += datetime.timedelta(days=1)
+        
+        # Skip Saturday (5) and Sunday (6)
+        while candidate.weekday() >= 5:
+            candidate += datetime.timedelta(days=1)
+
+        delta_sec = int((candidate - now).total_seconds())
+        return candidate, max(delta_sec, 5)
 
     def is_market_open(self, now: Optional[datetime.datetime] = None) -> bool:
         """Checks if current time is within official NSE trading session (09:15 to 15:30 IST on weekdays)."""

@@ -410,18 +410,30 @@ class PaperTradingEngine(BaseTradingEngine):
             while True:
                 now = datetime.datetime.now()
 
-                # Check if market has officially closed for the day
-                if self.is_market_closed(now):
-                    print(f"[{now.strftime('%H:%M:%S')}] 🛑 Market is closed for today.")
+                # Check if launched on weekend or after market close (15:30 IST)
+                if now.weekday() >= 5 or now.time() >= datetime.time(15, 30):
+                    next_sess, remaining_sec = self.get_next_market_session(now)
+                    print(f"[{now.strftime('%H:%M:%S')}] 🛑 Market is closed (Weekend / Post-Market).")
+                    print(f"📅 Next market session: {next_sess.strftime('%A %Y-%m-%d 09:15:00')} IST ({remaining_sec}s remaining).")
                     if self.active_positions:
                         self.squareoff_all_positions()
                     self.generate_eod_report()
                     break
 
-                # If before market open (09:15 AM), wait until 09:15
+                # 1. Pre-Market Single-Shot Sleep (Before 09:15 AM)
                 if not self.is_market_open(now):
-                    print(f"[{now.strftime('%H:%M:%S')}] ⏳ Pre-market: Waiting for market open at 09:15 AM IST...")
-                    time.sleep(30)
+                    wait_sec = self.get_seconds_until_market_open(now)
+                    target_time = (now + datetime.timedelta(seconds=wait_sec)).strftime('%H:%M:%S')
+                    print(f"[{now.strftime('%H:%M:%S')}] ⏳ Pre-market: Sleeping {wait_sec}s until market open at {target_time} IST...")
+                    time.sleep(wait_sec)
+                    continue
+
+                # 2. Pre-Entry Window Direct Sleep (09:15 AM - 10:00 AM with 0 Active Positions)
+                if not self.is_entry_window_active(now) and not self.active_positions and now.time() < datetime.time(10, 0):
+                    wait_sec = self.get_seconds_until_entry_window(now)
+                    target_time = (now + datetime.timedelta(seconds=wait_sec)).strftime('%H:%M:%S')
+                    print(f"[{now.strftime('%H:%M:%S')}] ⏳ Pre-entry: 0 active positions. Sleeping {wait_sec}s until entry window opens at {target_time} IST...")
+                    time.sleep(wait_sec)
                     continue
 
                 # 2. Check 3:00 PM Squareoff
