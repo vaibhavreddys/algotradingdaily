@@ -65,6 +65,8 @@ algotradingdaily/
 ├── data_pipeline/         # Market data gateway & high-frequency tick caching
 │   ├── data_feed.py       # Smart local caching, silent scans & live tick fetcher
 │   └── openalgo_ingestion/# Isolated OpenAlgo 1m downloader and DuckDB reader
+│
+├── visualizer/            # Self-contained candle chart UI (localhost:8501)
 
 │
 ├── backtesting/           # Historical simulation & scanning engines
@@ -153,6 +155,15 @@ from data_pipeline.openalgo_ingestion import BacktestDataReader
 frame = BacktestDataReader().get_full_dataframe(symbol="RELIANCE")
 close_matrix = BacktestDataReader().get_vectorbt_matrix()
 ```
+
+#### Browse the store visually
+
+```bash
+python visualizer/server.py   # opens http://127.0.0.1:8501
+```
+
+Candles + volume for any symbol/timeframe (1m–1d), SMA/EMA/VWAP overlays,
+crosshair legend, CSV export, and a stale-aggregate warning banner.
 
 ### Data integrity & maintenance
 

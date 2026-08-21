@@ -1,0 +1,490 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OpenAlgo Candle Visualizer</title>
+<script src="/vendor/lightweight-charts.standalone.production.js"></script>
+<style>
+  :root {
+    --bg: #131722; --panel: #1b1f2b; --panel2: #262b38;
+    --text: #d1d4dc; --muted: #787b86; --accent: #2962ff;
+    --up: #26a69a; --down: #ef5350; --border: #333846;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 13px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    display: flex; flex-direction: column;
+  }
+  .toolbar {
+    display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+    padding: 10px 14px; background: linear-gradient(180deg, #20242f, #1a1e29);
+    border-bottom: 1px solid var(--border);
+  }
+  .brand { font-weight: 800; font-size: 15px; letter-spacing: .3px; margin-right: 10px; white-space: nowrap; }
+  .brand span { color: var(--accent); }
+  input, select, button {
+    background: var(--panel2); color: var(--text); border: 1px solid var(--border);
+    border-radius: 7px; padding: 6px 10px; font-size: 13px; outline: none;
+    transition: border-color .15s, filter .15s;
+  }
+  input:focus, select:focus { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(41,98,255,.25); }
+  input[type="date"] { color-scheme: dark; }
+  #symbol { width: 150px; text-transform: uppercase; font-weight: 600; letter-spacing: .5px; }
+  select { cursor: pointer; }
+  button { cursor: pointer; }
+  button:hover:not(:disabled) { border-color: var(--accent); }
+  button.primary {
+    background: var(--accent); border-color: var(--accent); color: #fff;
+    font-weight: 700; padding: 6px 16px; border-radius: 7px;
+  }
+  button.primary:hover { filter: brightness(1.12); }
+  button.primary:disabled { opacity: .55; cursor: wait; }
+  .chip { padding: 5px 10px; border-radius: 14px; font-weight: 600; color: var(--muted); }
+  .chip.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .sep { width: 1px; height: 22px; background: var(--border); margin: 0 4px; }
+  .checks { display: flex; gap: 12px; align-items: center; margin-left: auto; }
+  .checks label { display: flex; gap: 5px; align-items: center; cursor: pointer; color: var(--muted); user-select: none; }
+  .checks label.on { color: var(--text); font-weight: 600; }
+  .checks input { accent-color: var(--accent); cursor: pointer; }
+  .checks .sep { margin: 0 2px; }
+  .infobar {
+    display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
+    padding: 6px 14px; background: var(--panel); border-bottom: 1px solid var(--border);
+    color: var(--muted); min-height: 31px; font-size: 12.5px;
+  }
+  .infobar b { color: var(--text); font-weight: 600; }
+  .badge {
+    display: none; margin-left: auto; padding: 2px 10px; border-radius: 10px;
+    background: #4e342e; color: #ffcc80; font-weight: 600; font-size: 12px;
+  }
+  .badge.show { display: inline-block; }
+  #chart-wrap { flex: 1; position: relative; min-height: 200px; }
+  #chart { position: absolute; inset: 0; }
+  #legend {
+    position: absolute; top: 10px; left: 12px; z-index: 5; pointer-events: none;
+    background: rgba(19, 23, 34, .78); backdrop-filter: blur(4px);
+    border: 1px solid var(--border); border-radius: 8px;
+    padding: 7px 11px; font-size: 12.5px; line-height: 1.55;
+    font-variant-numeric: tabular-nums;
+  }
+  #legend .row1 { font-weight: 700; font-size: 13px; margin-bottom: 2px; }
+  #legend .up { color: var(--up); }
+  #legend .down { color: var(--down); }
+  #legend .dim { color: var(--muted); }
+  #toast {
+    position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%);
+    background: #c62828; color: #fff; padding: 9px 18px; border-radius: 8px;
+    opacity: 0; pointer-events: none; transition: opacity .25s; z-index: 20;
+    max-width: 70%; box-shadow: 0 4px 18px rgba(0,0,0,.5);
+  }
+  #toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+
+<div class="toolbar">
+  <div class="brand">📈 Open<span>Algo</span> Viz</div>
+  <input id="symbol" list="symbols" placeholder="Symbol e.g. RELIANCE" spellcheck="false">
+  <datalist id="symbols"></datalist>
+  <select id="timeframe" title="Timeframe">
+    <option value="ohlcv_1m">1 minute</option>
+    <option value="ohlcv_5m">5 minutes</option>
+    <option value="ohlcv_15m" selected>15 minutes</option>
+    <option value="ohlcv_1h">1 hour</option>
+    <option value="ohlcv_1d">1 day</option>
+  </select>
+  <div class="sep"></div>
+  <input type="date" id="from" title="From (IST)">
+  <span style="color:var(--muted)">→</span>
+  <input type="date" id="to" title="To (IST)">
+  <button class="chip" data-days="1">1D</button>
+  <button class="chip" data-days="7">1W</button>
+  <button class="chip" data-days="30">1M</button>
+  <button class="chip" data-days="90">3M</button>
+  <button class="chip" data-days="180">6M</button>
+  <button class="chip" data-days="365">1Y</button>
+  <button class="chip" data-days="all">ALL</button>
+  <button id="load" class="primary">Load</button>
+  <div class="checks">
+    <label id="lbl-sma20"><input type="checkbox" id="sma20"> SMA20</label>
+    <label id="lbl-sma50"><input type="checkbox" id="sma50"> SMA50</label>
+    <label id="lbl-ema9"><input type="checkbox" id="ema9"> EMA9</label>
+    <label id="lbl-vwap" title="Intraday VWAP resets each session; disabled on 1D"><input type="checkbox" id="vwap"> VWAP</label>
+    <label id="lbl-volma" title="20-bar moving average of volume"><input type="checkbox" id="volma"> VolMA20</label>
+    <div class="sep"></div>
+    <label id="lbl-log" title="Logarithmic price scale"><input type="checkbox" id="logscale"> Log</label>
+    <button id="csv" title="Download current view as CSV (IST timestamps)">⬇ CSV</button>
+  </div>
+</div>
+
+<div class="infobar">
+  <span id="info">Initializing…</span>
+  <span id="stale" class="badge">⚠ Aggregates stale — rerun: python openalgo_ingest.py --action aggregate</span>
+</div>
+
+<div id="chart-wrap">
+  <div id="chart"></div>
+  <div id="legend"></div>
+</div>
+<div id="toast"></div>
+
+<script>
+const TF_LABEL = {"ohlcv_1m":"1m","ohlcv_5m":"5m","ohlcv_15m":"15m","ohlcv_1h":"1h","ohlcv_1d":"1d"};
+const IST_OFFSET = 19800;
+const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+const LS_KEY = "openalgo_viz_prefs";
+
+const $ = id => document.getElementById(id);
+const symbolEl = $("symbol"), tfEl = $("timeframe"), fromEl = $("from"), toEl = $("to");
+const infoEl = $("info"), staleEl = $("stale"), toastEl = $("toast"), legendEl = $("legend");
+
+let chart, candleSeries, volumeSeries, maLines, vwapSeries;
+let lastMeta = null, lastPayload = null, pts = [];
+
+function toast(msg) {
+  toastEl.textContent = msg;
+  toastEl.classList.add("show");
+  setTimeout(() => toastEl.classList.remove("show"), 4000);
+}
+
+async function fetchJSON(url) {
+  const res = await fetch(url);
+  const body = await res.json().catch(() => ({error: res.statusText}));
+  if (!res.ok) throw new Error(body.error || res.statusText);
+  return body;
+}
+
+const pad = n => String(n).padStart(2, "0");
+
+function istParts(sec) {
+  const d = new Date((sec + IST_OFFSET) * 1000);
+  return {
+    Y: d.getUTCFullYear(), M: d.getUTCMonth(), D: d.getUTCDate(),
+    H: d.getUTCHours(), Mi: d.getUTCMinutes(),
+  };
+}
+
+function istDateTime(sec) {
+  const p = istParts(sec);
+  return `${p.Y}-${pad(p.M + 1)}-${pad(p.D)} ${pad(p.H)}:${pad(p.Mi)} IST`;
+}
+
+function istTickLabel(sec) {
+  const p = istParts(sec);
+  if (tfEl.value === "ohlcv_1d") return `${p.D} ${MONTHS[p.M]}`;
+  if (p.H === 9 && p.Mi === 15) return `${p.D} ${MONTHS[p.M]}`;
+  return `${pad(p.H)}:${pad(p.Mi)}`;
+}
+
+function fmtNum(n) {
+  return n.toLocaleString("en-IN", {maximumFractionDigits: 2});
+}
+
+function fmtVol(v) {
+  if (v >= 1e7) return (v / 1e7).toFixed(2) + " Cr";
+  if (v >= 1e5) return (v / 1e5).toFixed(2) + " L";
+  if (v >= 1e3) return (v / 1e3).toFixed(1) + "K";
+  return String(v);
+}
+
+function initChart() {
+  const wrap = $("chart-wrap");
+  chart = LightweightCharts.createChart($("chart"), {
+    width: wrap.clientWidth, height: wrap.clientHeight,
+    layout: {background: {color: "transparent"}, textColor: "#787b86", fontFamily: "inherit"},
+    grid: {vertLines: {color: "#1b2030"}, horzLines: {color: "#1b2030"}},
+    rightPriceScale: {borderColor: "#333846", scaleMargins: {top: 0.08, bottom: 0.28}},
+    timeScale: {
+      borderColor: "#333846", timeVisible: true, secondsVisible: false,
+      rightOffset: 3, barSpacing: 7,
+      tickMarkFormatter: t => istTickLabel(t),
+    },
+    crosshair: {
+      mode: LightweightCharts.CrosshairMode.Normal,
+      vertLine: {color: "#5d6470", width: 1, style: 3, labelBackgroundColor: "#2a2e39"},
+      horzLine: {color: "#5d6470", width: 1, style: 3, labelBackgroundColor: "#2a2e39"},
+    },
+    localization: {timeFormatter: t => istDateTime(t)},
+    watermark: {visible: false},
+  });
+  candleSeries = chart.addCandlestickSeries({
+    upColor: "#26a69a", downColor: "#ef5350",
+    wickUpColor: "#26a69a", wickDownColor: "#ef5350", borderVisible: false,
+  });
+  volumeSeries = chart.addHistogramSeries({priceFormat: {type: "volume"}, priceScaleId: ""});
+  volumeSeries.priceScale().applyOptions({scaleMargins: {top: 0.82, bottom: 0}});
+  maLines = {
+    sma20: chart.addLineSeries({color: "#f0b90b", lineWidth: 1, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false}),
+    sma50: chart.addLineSeries({color: "#42a5f5", lineWidth: 1, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false}),
+    ema9: chart.addLineSeries({color: "#ff7043", lineWidth: 1, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false}),
+  };
+  vwapSeries = chart.addLineSeries({color: "#e040fb", lineWidth: 2, lineStyle: 2, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false});
+  chart.subscribeCrosshairMove(updateLegend);
+  new ResizeObserver(() => chart.applyOptions({width: wrap.clientWidth, height: wrap.clientHeight})).observe(wrap);
+}
+
+function sma(values, n) {
+  const out = [];
+  let sum = 0;
+  for (let i = 0; i < values.length; i++) {
+    sum += values[i];
+    if (i >= n) sum -= values[i - n];
+    if (i >= n - 1) out.push({time: pts[i].time, value: sum / n});
+  }
+  return out;
+}
+
+function ema(values, n) {
+  const out = [];
+  const k = 2 / (n + 1);
+  let prev = null;
+  for (let i = 0; i < values.length; i++) {
+    prev = prev === null ? values[i] : values[i] * k + prev * (1 - k);
+    if (i >= n - 1) out.push({time: pts[i].time, value: prev});
+  }
+  return out;
+}
+
+function vwapSeriesData() {
+  const out = [];
+  let cumPV = 0, cumV = 0, curDay = null;
+  for (const p of pts) {
+    const day = Math.floor((p.time + IST_OFFSET) / 86400);
+    if (day !== curDay) { curDay = day; cumPV = 0; cumV = 0; }
+    const tp = (p.high + p.low + p.close) / 3;
+    cumPV += tp * p.volume; cumV += p.volume;
+    out.push({time: p.time, value: cumV ? cumPV / cumV : tp});
+  }
+  return out;
+}
+
+function render(payload) {
+  pts = payload.candles.map(c => ({
+    time: c[0], open: c[1], high: c[2], low: c[3], close: c[4], volume: c[5],
+  }));
+  candleSeries.setData(pts.map(p => ({time: p.time, open: p.open, high: p.high, low: p.low, close: p.close})));
+  volumeSeries.setData(pts.map(p => ({
+    time: p.time, value: p.volume,
+    color: p.close >= p.open ? "rgba(38,166,154,.40)" : "rgba(239,83,80,.40)",
+  })));
+  updateOverlays();
+  chart.applyOptions({
+    watermark: {
+      visible: true, text: `${payload.symbol} · ${TF_LABEL[payload.table]}${payload.count ? "" : " (no data)"}`,
+      color: "rgba(120,123,134,.16)", fontSize: 46, horizontalAlign: "center", verticalAlign: "center",
+    },
+  });
+  chart.timeScale().fitContent();
+  updateLegend({time: undefined});
+}
+
+function updateOverlays() {
+  const closes = pts.map(p => p.close);
+  const vols = pts.map(p => p.volume);
+  maLines.sma20.setData($("sma20").checked && pts.length > 20 ? sma(closes, 20) : []);
+  maLines.sma50.setData($("sma50").checked && pts.length > 50 ? sma(closes, 50) : []);
+  maLines.ema9.setData($("ema9").checked && pts.length > 9 ? ema(closes, 9) : []);
+  vwapSeries.setData($("vwap").checked && tfEl.value !== "ohlcv_1d" ? vwapSeriesData() : []);
+  const volMa = sma(vols, 20).map(o => ({time: o.time, value: o.value}));
+  if ($("volma").checked && volMa.length) {
+    maLines.volMa = maLines.volMa || (() => {
+      const s = chart.addLineSeries({color: "rgba(209,212,220,.65)", lineWidth: 1, priceScaleId: "", priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false});
+      s.priceScale().applyOptions({scaleMargins: {top: 0.82, bottom: 0}});
+      return s;
+    })();
+    maLines.volMa.setData(volMa);
+  } else if (maLines.volMa) {
+    maLines.volMa.setData([]);
+  }
+}
+
+function updateLegend(param) {
+  if (!pts.length) { legendEl.innerHTML = ""; return; }
+  let idx = pts.length - 1;
+  if (param && param.time !== undefined && param.time !== null) {
+    const found = pts.findIndex(p => p.time === param.time);
+    if (found >= 0) idx = found;
+  }
+  const p = pts[idx];
+  const prev = idx > 0 ? pts[idx - 1].close : p.open;
+  const chg = p.close - prev;
+  const chgPct = prev ? (chg / prev) * 100 : 0;
+  const cls = chg >= 0 ? "up" : "down";
+  const arrow = chg >= 0 ? "▲" : "▼";
+  legendEl.innerHTML =
+    `<div class="row1">${lastPayload ? lastPayload.symbol : ""} · ${TF_LABEL[lastPayload ? lastPayload.table : tfEl.value]}
+       <span class="dim" style="font-weight:400;margin-left:6px">${istDateTime(p.time)}</span></div>` +
+    `<span class="${cls}">${arrow} ${fmtNum(p.close)}</span>
+     <span class="dim">O</span> ${fmtNum(p.open)}
+     <span class="dim">H</span> ${fmtNum(p.high)}
+     <span class="dim">L</span> <span class="${p.low <= prev ? "" : cls}">${fmtNum(p.low)}</span>
+     <span class="dim">V</span> ${fmtVol(p.volume)}
+     <span class="${cls}">${arrow} ${chg >= 0 ? "+" : ""}${chgPct.toFixed(2)}%</span>`;
+}
+
+function setInfo(payload) {
+  const parts = [`<b>${payload.symbol}</b> · ${TF_LABEL[payload.table]}`, `${payload.count.toLocaleString("en-IN")} candles`];
+  if (payload.count > 0) {
+    parts.push(`${istDateTime(payload.candles[0][0]).slice(0, 16)} → ${istDateTime(payload.candles[payload.count - 1][0]).slice(0, 16)}`);
+  }
+  infoEl.innerHTML = parts.join('&nbsp;&nbsp;·&nbsp;&nbsp;');
+  infoEl.style.color = payload.count === 0 ? "#ef5350" : "";
+}
+
+function checkStaleness() {
+  staleEl.classList.remove("show");
+  fetchJSON("/api/freshness").then(fresh => {
+    const base = fresh.ohlcv_1m.max_ts;
+    const agg = fresh[tfEl.value];
+    if (!base || !agg || !agg.max_ts) return;
+    if (base - agg.max_ts > 12 * 3600) staleEl.classList.add("show");
+  }).catch(() => {});
+}
+
+function savePrefs() {
+  try {
+    localStorage.setItem(LS_KEY, JSON.stringify({
+      symbol: symbolEl.value, tf: tfEl.value,
+      sma20: $("sma20").checked, sma50: $("sma50").checked,
+      ema9: $("ema9").checked, vwap: $("vwap").checked,
+      volma: $("volma").checked, log: $("logscale").checked,
+    }));
+  } catch (e) {}
+}
+
+function applyLogScale(on) {
+  chart.applyOptions({rightPriceScale: {mode: on ? LightweightCharts.PriceScaleMode.Logarithmic : LightweightCharts.PriceScaleMode.Normal}});
+}
+
+async function load() {
+  const symbol = symbolEl.value.trim().toUpperCase();
+  if (!symbol) { toast("Enter a symbol"); return; }
+  $("load").disabled = true;
+  infoEl.textContent = "Loading…";
+  savePrefs();
+  try {
+    const qs = new URLSearchParams({symbol, table: tfEl.value});
+    if (fromEl.value) qs.set("start", fromEl.value);
+    if (toEl.value) qs.set("end", toEl.value);
+    const payload = await fetchJSON("/api/candles?" + qs);
+    if (payload.truncated) toast(`Showing latest ${payload.count.toLocaleString("en-IN")} candles (limit reached) — narrow the date range`);
+    lastPayload = payload;
+    render(payload);
+    setInfo(payload);
+    checkStaleness();
+  } catch (err) {
+    infoEl.textContent = err.message;
+    infoEl.style.color = "#ef5350";
+    toast(err.message);
+  } finally {
+    $("load").disabled = false;
+  }
+}
+
+async function refreshBounds(keepRange) {
+  try {
+    lastMeta = await fetchJSON("/api/meta?table=" + tfEl.value);
+    if (!lastMeta.min_ts) { infoEl.textContent = `No rows in ${tfEl.value}`; return; }
+    fromEl.min = toEl.min = fmtDate(lastMeta.min_ts);
+    fromEl.max = toEl.max = fmtDate(lastMeta.max_ts);
+    if (!keepRange) quickRange("all");
+  } catch (err) { infoEl.textContent = err.message; }
+}
+
+function fmtDate(sec) {
+  return new Date((sec + IST_OFFSET) * 1000).toISOString().slice(0, 10);
+}
+
+function quickRange(days) {
+  if (!lastMeta || !lastMeta.max_ts) return;
+  document.querySelectorAll("button.chip").forEach(b =>
+    b.classList.toggle("active", b.dataset.days === String(days)));
+  toEl.value = fmtDate(lastMeta.max_ts);
+  if (days === "all") {
+    fromEl.value = fmtDate(lastMeta.min_ts);
+  } else {
+    const anchor = new Date((lastMeta.max_ts + IST_OFFSET) * 1000);
+    anchor.setUTCDate(anchor.getUTCDate() - days + 1);
+    anchor.setUTCHours(0, 0, 0, 0);
+    fromEl.value = anchor.toISOString().slice(0, 10);
+  }
+}
+
+function exportCSV() {
+  if (!lastPayload || !lastPayload.count) { toast("Nothing to export"); return; }
+  const rows = ["timestamp_ist,symbol,timeframe,open,high,low,close,volume"];
+  for (const c of lastPayload.candles) {
+    rows.push([istDateTime(c[0]), lastPayload.symbol, TF_LABEL[lastPayload.table], ...c.slice(1)].join(","));
+  }
+  const blob = new Blob([rows.join("\n")], {type: "text/csv"});
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `${lastPayload.symbol}_${TF_LABEL[lastPayload.table]}.csv`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+for (const [id, fn] of [
+  ["sma20", updateOverlays], ["sma50", updateOverlays], ["ema9", updateOverlays],
+  ["vwap", updateOverlays], ["volma", updateOverlays],
+]) {
+  $(id).addEventListener("change", () => {
+    $("lbl-" + id).classList.toggle("on", $(id).checked);
+    fn(); savePrefs();
+  });
+}
+$("logscale").addEventListener("change", () => {
+  $("lbl-log").classList.toggle("on", $("logscale").checked);
+  applyLogScale($("logscale").checked); savePrefs();
+});
+
+document.querySelectorAll("button.chip").forEach(b =>
+  b.addEventListener("click", () => quickRange(b.dataset.days)));
+tfEl.addEventListener("change", async () => {
+  $("vwap").disabled = tfEl.value === "ohlcv_1d";
+  if (tfEl.value === "ohlcv_1d") { $("vwap").checked = false; $("lbl-vwap").classList.remove("on"); }
+  savePrefs();
+  await refreshBounds(false);
+  if (symbolEl.value.trim()) load();
+});
+fromEl.addEventListener("change", () => {
+  document.querySelectorAll("button.chip").forEach(b => b.classList.remove("active"));
+  if (toEl.value && fromEl.value > toEl.value) toEl.value = fromEl.value;
+});
+toEl.addEventListener("change", () => {
+  document.querySelectorAll("button.chip").forEach(b => b.classList.remove("active"));
+  if (fromEl.value && toEl.value < fromEl.value) fromEl.value = toEl.value;
+});
+$("load").addEventListener("click", load);
+$("csv").addEventListener("click", exportCSV);
+symbolEl.addEventListener("keydown", e => { if (e.key === "Enter") load(); });
+
+(async function init() {
+  let prefs = {};
+  try { prefs = JSON.parse(localStorage.getItem(LS_KEY) || "{}"); } catch (e) {}
+  initChart();
+  try {
+    const syms = await fetchJSON("/api/symbols");
+    $("symbols").innerHTML = syms.symbols.map(s => `<option value="${s}">`).join("");
+    symbolEl.value = prefs.symbol || (syms.symbols.includes("RELIANCE") ? "RELIANCE" : syms.symbols[0] || "");
+    if (prefs.tf && TF_LABEL[prefs.tf]) tfEl.value = prefs.tf;
+    for (const k of ["sma20", "sma50", "ema9", "vwap", "volma", "logscale"]) {
+      if (k in prefs) { $(k).checked = !!prefs[k]; $("lbl-" + k.replace("logscale", "log")).classList.toggle("on", !!prefs[k]); }
+    }
+    $("vwap").disabled = tfEl.value === "ohlcv_1d";
+    applyLogScale($("logscale").checked);
+    await refreshBounds(true);
+    quickRange("all");
+    if (symbolEl.value) load();
+    else infoEl.textContent = "No symbols in store yet";
+  } catch (err) {
+    infoEl.textContent = err.message;
+    toast(err.message);
+  }
+})();
+</script>
+</body>
+</html>
