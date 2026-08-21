@@ -2,18 +2,18 @@
 Multi-Stock Chronological Portfolio Execution Simulator.
 
 Simulates real-world account execution under realistic trading constraints:
-  - Fixed baseline capital (default: ₹10,000)
+  - Dynamic compounding account equity
   - Strict max concurrent position slots (default: 2 slots)
   - Intraday equity MIS leverage (default: 5x)
-  - Exact Shoonya statutory taxes and brokerage deductions per trade
+  - Statutory taxes and multi-broker friction modeling per trade
   - Chronological slot allocation (first valid breakdown fills open slot)
+  - Intraday daily loss circuit breaker protection
 """
 
 import os
 import sys
 import argparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
-
 from typing import Optional, Tuple
 import numpy as np
 import pandas as pd
@@ -76,13 +76,11 @@ def _scan_single_symbol(ticker, nifty_pct_map, config: TradingConfig, refresh: b
 
 def scan_universe_signals(symbols, nifty_pct_map, config: TradingConfig = CONFIG, refresh: bool = False):
     """
-    Scans all stock symbols in the universe in parallel (8 workers) and compiles
-    all candidate trade signals. Returns a DataFrame of all detected signals
-    sorted chronologically by Entry Time.
+    Scans all stock symbols in parallel and compiles candidate trade signals sorted chronologically.
     """
     all_signals = []
     total = len(symbols)
-    print(f"[2/3] Scanning Nifty 50 constituents with RELATIVE WEAKNESS filter ({total} symbols, 8 parallel workers)...")
+    print(f"[2/3] Scanning {total} universe constituents with RELATIVE WEAKNESS filter (8 parallel workers)...")
 
     if not symbols:
         return pd.DataFrame()
@@ -100,8 +98,6 @@ def scan_universe_signals(symbols, nifty_pct_map, config: TradingConfig = CONFIG
                 print(f"      ✓ {done}/{total} symbols scanned", end="\r")
         print()
 
-        # Collect in original symbol order so the downstream chronological sort
-        # sees identical input to a sequential run -> exact numerical parity.
         for ticker in symbols:
             _, trades = futures[ticker].result()
             if trades:
@@ -116,7 +112,7 @@ def scan_universe_signals(symbols, nifty_pct_map, config: TradingConfig = CONFIG
 def simulate_portfolio_execution(signals_df: pd.DataFrame, config: TradingConfig = CONFIG):
     """
     Executes candidate signals chronologically, enforcing dynamic equal-split compounding across
-    max concurrent position slots and computing exact Shoonya regulatory fee deductions per trade.
+    max concurrent position slots and computing exact regulatory fee deductions per trade.
     """
     print("[3/3] Running chronological portfolio execution simulation...")
     capital = config.INITIAL_CAPITAL
@@ -139,13 +135,16 @@ def simulate_portfolio_execution(signals_df: pd.DataFrame, config: TradingConfig
                 day_starting_capital = capital
                 day_realized_pnl = 0.0
 
-            # Release slots that closed before this entry and tally day realized PnL
+            # Release slots that closed before this entry and tally day realized PnL in a single pass
+            still_active = []
             for t in active_trades:
                 if t['Exit Time'] <= sig['Entry Time']:
                     day_realized_pnl += t['net_pnl']
-            active_trades = [t for t in active_trades if t['Exit Time'] > sig['Entry Time']]
+                else:
+                    still_active.append(t)
+            active_trades = still_active
 
-            # Enforce 3% Daily Max Portfolio Loss Circuit Breaker
+            # Enforce Daily Max Portfolio Loss Circuit Breaker (e.g. 4%)
             if is_daily_loss_limit_reached(day_realized_pnl, day_starting_capital, config.MAX_DAILY_LOSS_PCT):
                 continue
 
@@ -221,7 +220,7 @@ def run_portfolio_simulation(config: TradingConfig = CONFIG, refresh: bool = Fal
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Multi-Stock Chronological Portfolio Simulation")
+    parser = argparse.ArgumentParser(description="Multi-Stock Portfolio Simulation Engine")
     parser.add_argument(
         "--refresh",
         action="store_true",
