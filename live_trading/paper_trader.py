@@ -479,5 +479,6 @@ class PaperTradingEngine(BaseTradingEngine):
 
 
 if __name__ == "__main__":
-    engine = PaperTradingEngine()
-    engine.run_live_loop()
+    with prevent_sleep_context():
+        engine = PaperTradingEngine()
+        engine.run_live_loop()

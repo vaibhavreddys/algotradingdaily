@@ -24,7 +24,7 @@ if hasattr(sys.stdout, 'reconfigure'):
         pass
 
 from config import CONFIG, TradingConfig
-from live_trading.base_engine import BaseTradingEngine
+from live_trading.base_engine import BaseTradingEngine, prevent_sleep_context
 from core.capital import calculate_order_quantity
 
 
@@ -221,5 +221,6 @@ if __name__ == "__main__":
     print("       LIVE REAL-MONEY TRADING ENGINE (SHOONYA OMS)")
     print(f"       Capital: ₹{CONFIG.INITIAL_CAPITAL:,.0f} | Max Slots: {CONFIG.MAX_CONCURRENT_POSITIONS}")
     print("=======================================================\n")
-    engine = LiveTradingEngine()
-    engine.authenticate()
+    with prevent_sleep_context():
+        engine = LiveTradingEngine()
+        engine.authenticate()
