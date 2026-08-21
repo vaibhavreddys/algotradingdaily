@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import MagicMock
 from config import TradingConfig
 from core.capital import (
     get_slot_margin,
@@ -6,6 +7,7 @@ from core.capital import (
     calculate_order_quantity,
     get_persisted_paper_capital,
 )
+from live_trading.base_engine import BaseTradingEngine
 
 
 class TestCapitalManagement(unittest.TestCase):
@@ -49,6 +51,27 @@ class TestCapitalManagement(unittest.TestCase):
         cap = get_persisted_paper_capital(initial_capital=10000.0)
         self.assertIsInstance(cap, float)
         self.assertGreater(cap, 0.0)
+
+    def test_base_engine_get_account_capital_live_mock(self):
+        engine = BaseTradingEngine(config=TradingConfig(TRADING_MODE="live", INITIAL_CAPITAL=10000.0))
+        mock_api = MagicMock()
+        mock_api.get_limits.return_value = {
+            'stat': 'Ok',
+            'cash': '12500.00',
+            'payin': '0.00',
+            'marginused': '500.00'
+        }
+        engine.api = mock_api
+        cap = engine.get_account_capital()
+        self.assertEqual(cap, 12000.0)
+
+    def test_base_engine_get_account_capital_live_api_failure_fallback(self):
+        engine = BaseTradingEngine(config=TradingConfig(TRADING_MODE="live", INITIAL_CAPITAL=10000.0))
+        mock_api = MagicMock()
+        mock_api.get_limits.side_effect = Exception("Connection Timeout")
+        engine.api = mock_api
+        cap = engine.get_account_capital()
+        self.assertEqual(cap, 10000.0)
 
 
 if __name__ == '__main__':

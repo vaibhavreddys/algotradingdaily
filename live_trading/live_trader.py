@@ -25,6 +25,7 @@ if hasattr(sys.stdout, 'reconfigure'):
 
 from config import CONFIG, TradingConfig
 from live_trading.base_engine import BaseTradingEngine
+from core.capital import calculate_order_quantity
 
 
 class LiveTradingEngine(BaseTradingEngine):
@@ -132,7 +133,13 @@ class LiveTradingEngine(BaseTradingEngine):
             print(f"⚠️ Max position slots ({self.config.MAX_CONCURRENT_POSITIONS}) full. Rejecting entry for {symbol}.")
             return False
 
-        qty = max(int(self.config.per_trade_exposure // current_price), 1)
+        current_capital = self.get_account_capital()
+        qty = calculate_order_quantity(
+            entry_price=current_price,
+            current_capital=current_capital,
+            max_concurrent_positions=self.config.MAX_CONCURRENT_POSITIONS,
+            leverage_mis=self.config.LEVERAGE_MIS
+        )
         risk = sl_price - current_price
         target_pts = current_price - tp_price
 

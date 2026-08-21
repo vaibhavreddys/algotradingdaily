@@ -28,6 +28,7 @@ if hasattr(sys.stdout, 'reconfigure'):
         pass
 
 from config import CONFIG, TradingConfig
+from core.capital import get_persisted_paper_capital
 from data_pipeline import get_nifty50_symbols
 
 
@@ -43,6 +44,27 @@ class BaseTradingEngine(NorenApi):
         )
         self.config = config
         self.active_positions: Dict[str, Dict[str, Any]] = {}
+
+    def get_account_capital(self) -> float:
+        """
+        Returns the current active account capital:
+          - Live Mode: Queries live Shoonya broker funds API (api.get_limits()).
+          - Paper Mode: Reconstructs cumulative balance from SQLite paper_trades.db.
+        """
+        if self.config.TRADING_MODE == "live" and self.api:
+            try:
+                limits = self.api.get_limits()
+                if limits and limits.get('stat') == 'Ok':
+                    cash = float(limits.get('cash', 0.0))
+                    payin = float(limits.get('payin', 0.0))
+                    marginused = float(limits.get('marginused', 0.0))
+                    available = cash + payin - marginused
+                    if available > 0:
+                        return available
+            except Exception as e:
+                print(f"⚠️ Failed to fetch live broker limits ({e}). Falling back to default.")
+        return get_persisted_paper_capital(initial_capital=self.config.INITIAL_CAPITAL, mode=self.config.TRADING_MODE)
+
         self.cached_nifty_benchmark: Optional[Any] = None
         self.user = os.getenv("SHOONYA_USER")
         self.pwd = os.getenv("SHOONYA_PWD")

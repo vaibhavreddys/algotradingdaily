@@ -26,6 +26,7 @@ if hasattr(sys.stdout, 'reconfigure'):
 
 from config import CONFIG, TradingConfig
 from live_trading.base_engine import BaseTradingEngine
+from core.capital import calculate_order_quantity
 from strategies.vwap_stoch_breakdown import STRATEGY_NAME, evaluate_signals
 from data_pipeline import (
     get_nifty50_symbols,
@@ -52,7 +53,7 @@ class PaperTradingEngine(BaseTradingEngine):
     """
     def __init__(self, config: TradingConfig = CONFIG):
         super().__init__(config=config)
-        self.virtual_balance = config.INITIAL_CAPITAL
+        self.virtual_balance = self.get_account_capital()
         self.paper_trades = []
 
     def execute_virtual_entry(self, symbol: str, entry_price: float, sl_price: float, tp_price: float):
@@ -60,7 +61,12 @@ class PaperTradingEngine(BaseTradingEngine):
         if len(self.active_positions) >= self.config.MAX_CONCURRENT_POSITIONS:
             return
 
-        qty = max(int(self.config.per_trade_exposure / entry_price), 1)
+        qty = calculate_order_quantity(
+            entry_price=entry_price,
+            current_capital=self.virtual_balance,
+            max_concurrent_positions=self.config.MAX_CONCURRENT_POSITIONS,
+            leverage_mis=self.config.LEVERAGE_MIS
+        )
         risk = sl_price - entry_price
         entry_time = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         order_id = f"PAPER_ORD_{int(time.time())}"
