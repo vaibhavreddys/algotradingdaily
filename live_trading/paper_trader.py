@@ -13,6 +13,7 @@ import time
 import datetime
 from typing import Dict, Any, Optional, List
 import pandas as pd
+from concurrent.futures import ThreadPoolExecutor
 
 # Ensure workspace root is in sys.path for direct script execution
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -216,13 +217,43 @@ class PaperTradingEngine(BaseTradingEngine):
         notify_eod_summary(report_text=eod_msg, mode="paper", config=self.config)
 
 
+    def _evaluate_single_symbol(self, ticker: str, nifty_pct_map: pd.Series) -> Optional[Dict[str, Any]]:
+        """Worker function to fetch and evaluate strategy signals for a single symbol in parallel."""
+        try:
+            raw_df = fetch_verified_candles(ticker, period="5d", interval=self.config.TIMEFRAME)
+            if raw_df is None or len(raw_df) < (self.config.SWING_HIGH_BARS + 5):
+                return None
+
+            df = evaluate_signals(raw_df, nifty_pct_map, config=self.config)
+            if df is None or len(df) == 0:
+                return None
+
+            last_idx = len(df) - 1
+            last_row = df.iloc[last_idx]
+
+            swing_high = float(df.iloc[last_idx - self.config.SWING_HIGH_BARS : last_idx]['High'].max()) if last_idx >= self.config.SWING_HIGH_BARS else 0.0
+
+            return {
+                'ticker': ticker,
+                'sym_key': f"{ticker.replace('.NS', '')}-EQ",
+                'last_row': last_row,
+                'swing_high': swing_high,
+                'signal': bool(last_row.get('Signal', False)),
+                'rel_weak_pass': bool(last_row.get('Rel_Weakness_Pass', False)),
+                'vwap_pass': bool(last_row.get('VWAP_Pass', False)),
+                'adx_pass': bool(last_row.get('ADX_Pass', False)),
+                'stoch_pass': bool(last_row.get('Stoch_Pass', False)),
+            }
+        except Exception:
+            return None
+
     def scan_and_execute_signals(self, nifty_pct_map: pd.Series) -> None:
         """
-        Scans the Nifty 50 universe at 15m candle close, tallies strategy filter funnel telemetry,
-        and triggers virtual entries if open slots exist.
+        Scans the universe in parallel across worker threads at 15m candle close,
+        tallies strategy filter funnel telemetry, and triggers virtual entries if open slots exist.
         """
         if self.is_daily_circuit_breaker_active():
-            print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] 🚨 [CIRCUIT BREAKER] 4% Max Daily Loss reached. Halting new scan entries.")
+            print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] 🛑 [CIRCUIT BREAKER] 4% Max Daily Loss reached. Halting new scan entries.")
             return
 
         symbols = get_nifty50_symbols()
@@ -234,49 +265,41 @@ class PaperTradingEngine(BaseTradingEngine):
         stoch_count = 0
         signals_fired = 0
 
-        for ticker in symbols:
-            sym_key = f"{ticker.replace('.NS', '')}-EQ"
+        # Parallelize candle ingestion across 8 workers for sub-second scan latency
+        evaluated_results = []
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            futures = [executor.submit(self._evaluate_single_symbol, ticker, nifty_pct_map) for ticker in symbols]
+            for future in futures:
+                res = future.result()
+                if res is not None:
+                    evaluated_results.append(res)
 
-            try:
-                raw_df = fetch_verified_candles(ticker, period="5d", interval=self.config.TIMEFRAME)
-                if raw_df is None or len(raw_df) < (self.config.SWING_HIGH_BARS + 5):
-                    continue
+        for res in evaluated_results:
+            eval_count += 1
+            if res['rel_weak_pass']:
+                rel_weak_count += 1
+            if res['vwap_pass']:
+                vwap_count += 1
+            if res['adx_pass']:
+                adx_count += 1
+            if res['stoch_pass']:
+                stoch_count += 1
 
-                df = evaluate_signals(raw_df, nifty_pct_map, config=self.config)
-                if df is None or len(df) == 0:
-                    continue
+            if res['signal']:
+                signals_fired += 1
+                sym_key = res['sym_key']
+                ticker = res['ticker']
+                if len(self.active_positions) < self.config.MAX_CONCURRENT_POSITIONS:
+                    if sym_key not in self.active_positions and ticker not in self.active_positions:
+                        entry_price = round(float(res['last_row']['Close']), 2)
+                        sl_price, tp_price, risk = calculate_stop_and_target(entry_price, res['swing_high'], config=self.config)
 
-                eval_count += 1
-                last_idx = len(df) - 1
-                last_row = df.iloc[last_idx]
-
-                # Tally sub-filter funnel metrics on the latest completed candle
-                if bool(last_row.get('Rel_Weakness_Pass', False)):
-                    rel_weak_count += 1
-                if bool(last_row.get('VWAP_Pass', False)):
-                    vwap_count += 1
-                if bool(last_row.get('ADX_Pass', False)):
-                    adx_count += 1
-                if bool(last_row.get('Stoch_Pass', False)):
-                    stoch_count += 1
-
-                # Check if qualified breakdown signal fired
-                if bool(last_row.get('Signal', False)):
-                    signals_fired += 1
-                    if len(self.active_positions) < self.config.MAX_CONCURRENT_POSITIONS:
-                        if sym_key not in self.active_positions and ticker not in self.active_positions:
-                            entry_price = round(float(last_row['Close']), 2)
-                            swing_high = float(df.iloc[last_idx - self.config.SWING_HIGH_BARS : last_idx]['High'].max())
-                            sl_price, tp_price, risk = calculate_stop_and_target(entry_price, swing_high, config=self.config)
-
-                            self.execute_virtual_entry(
-                                symbol=sym_key,
-                                entry_price=entry_price,
-                                sl_price=sl_price,
-                                tp_price=tp_price
-                            )
-            except Exception:
-                continue
+                        self.execute_virtual_entry(
+                            symbol=sym_key,
+                            entry_price=entry_price,
+                            sl_price=sl_price,
+                            tp_price=tp_price
+                        )
 
         # Render real-time Filter Funnel Telemetry Breakdown
         self.render_filter_funnel(
