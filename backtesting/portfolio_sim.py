@@ -29,6 +29,7 @@ if hasattr(sys.stdout, 'reconfigure'):
         pass
 
 from core.charges import calculate_charges
+from core.capital import get_slot_margin, get_slot_exposure
 from config import CONFIG, TradingConfig
 from data_pipeline import get_nifty50_symbols, fetch_nifty_benchmark, load_candle_data
 from strategies.vwap_stoch_breakdown import (
@@ -112,13 +113,11 @@ def scan_universe_signals(symbols, nifty_pct_map, config: TradingConfig = CONFIG
 
 def simulate_portfolio_execution(signals_df: pd.DataFrame, config: TradingConfig = CONFIG):
     """
-    Executes candidate signals chronologically, enforcing max concurrent position slots
-    and computing exact Shoonya regulatory and statutory fee deductions per trade.
+    Executes candidate signals chronologically, enforcing dynamic equal-split compounding across
+    max concurrent position slots and computing exact Shoonya regulatory fee deductions per trade.
     """
     print("[3/3] Running chronological portfolio execution simulation...")
     capital = config.INITIAL_CAPITAL
-    per_trade_margin = config.per_trade_margin
-    trade_exposure = config.per_trade_exposure
 
     active_trades = []
     executed_trades = []
@@ -130,6 +129,10 @@ def simulate_portfolio_execution(signals_df: pd.DataFrame, config: TradingConfig
             active_trades = [t for t in active_trades if t['Exit Time'] > sig['Entry Time']]
 
             if len(active_trades) < config.MAX_CONCURRENT_POSITIONS:
+                # Dynamically split CURRENT accumulated capital equally across configured slots
+                slot_margin = get_slot_margin(capital, config.MAX_CONCURRENT_POSITIONS)
+                trade_exposure = get_slot_exposure(capital, config.MAX_CONCURRENT_POSITIONS, config.LEVERAGE_MIS)
+
                 sell_turnover = trade_exposure
                 buy_turnover = trade_exposure * (1.0 - sig['PnL %'])
 
@@ -143,13 +146,16 @@ def simulate_portfolio_execution(signals_df: pd.DataFrame, config: TradingConfig
                 executed_trades.append({
                     'Symbol': sig['Symbol'], 'Entry Time': sig['Entry Time'],
                     'Exit Time': sig['Exit Time'], 'PnL %': sig['PnL %'] * 100,
+                    'Slot Margin (₹)': slot_margin, 'Exposure (₹)': trade_exposure,
                     'Gross PnL (₹)': raw_pnl, 'Net PnL (₹)': net_pnl,
                     'Capital': capital, 'Result': sig['Result']
                 })
                 active_trades.append(sig)
 
     tdf = pd.DataFrame(executed_trades)
-    return tdf, capital, total_charges_paid, trade_exposure, per_trade_margin
+    final_slot_margin = get_slot_margin(capital, config.MAX_CONCURRENT_POSITIONS)
+    final_exposure = get_slot_exposure(capital, config.MAX_CONCURRENT_POSITIONS, config.LEVERAGE_MIS)
+    return tdf, capital, total_charges_paid, final_exposure, final_slot_margin
 
 
 def print_simulation_report(
@@ -208,7 +214,8 @@ def print_simulation_report(
     print("Data Source            : Local Archives (market_data/)")
     print(f"Simulation Period      : {start_date} to {end_date} ({trading_days} Trading Days)")
     print(f"Initial Capital        : ₹{initial_capital:,.2f}")
-    print(f"Per-Trade Exposure     : ₹{config.per_trade_exposure:,.2f} (₹{config.per_trade_margin:,.0f} x {config.LEVERAGE_MIS} MIS)")
+    print(f"Max Simultaneous Trades: {config.MAX_CONCURRENT_POSITIONS} Positions (Equal Capital Split)")
+    print(f"Intraday MIS Leverage  : {config.LEVERAGE_MIS}x")
     print(f"Total Trades Taken     : {total_trades}")
     print(f"Winning Trades         : {win_count} | Losing Trades: {loss_count}")
     print(f"Win Rate               : {win_rate:.2f}%")
@@ -245,8 +252,9 @@ def print_simulation_report(
         b_sim_net_pnl = 0.0
         
         for _, row in tdf.iterrows():
-            s_turnover = config.per_trade_exposure
-            b_turnover = config.per_trade_exposure * (1.0 - (row['PnL %'] / 100.0))
+            trade_exp = row.get('Exposure (₹)', config.per_trade_exposure)
+            s_turnover = trade_exp
+            b_turnover = trade_exp * (1.0 - (row['PnL %'] / 100.0))
             cost = calculate_charges(s_turnover, b_turnover, broker=b_key)
             raw = config.per_trade_exposure * (row['PnL %'] / 100.0)
             b_sim_charges += cost
