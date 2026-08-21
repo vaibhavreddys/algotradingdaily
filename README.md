@@ -1,87 +1,105 @@
 # Shoonya Algorithmic Trading Bot & Simulation Engine
 
-An automated intraday quantitative trading execution engine and portfolio simulator built in Python for Shoonya (Finvasia).
+An automated, quantitative algorithmic trading bot and backtesting simulation suite tailored for Indian equity markets on the **Shoonya (Finvasia)** brokerage platform.
+
+The system trades the **VWAP-Stochastic RSI Breakdown Strategy** with **Nifty 50 Relative Weakness** filtering on 15-minute intraday candles.
 
 ---
 
 ## 📈 Quick Strategy Overview: VWAP-Stoch Breakdown
 
-* **Universe**: NIFTY 50 Constituents (NSE Equities)
-* **Timeframe**: 15-Minute Candles (:00, :15, :30, :45)
-* **Entry Window**: 10:00 AM – 1:30 PM IST (Short Breakdown)
-* **Core Logic**: Stochastic RSI overbought exit (`%K < 80`) + Trend Filter (`ADX > 25`) + VWAP Confirmation (`Close < VWAP`) + NIFTY 50 Relative Weakness.
-* **Risk & Exits**: 3-bar swing high Stop-Loss $\to$ Dynamic +1R Trailing SL to Breakeven $\to$ 1:2 R:R Target $\to$ 3:00 PM Auto-Squareoff.
-
-> 📖 **Full Math & Strategy Rules**: See [`docs/strategy_specification.md`](docs/strategy_specification.md)
+* **Direction**: Intraday Short Only (MIS Equity).
+* **Universe**: NIFTY 50 Constituents.
+* **Execution Timeframe**: 15-Minute Candles.
+* **Entry Conditions**:
+  1. **Relative Weakness**: Stock intraday % change from open is weaker than NIFTY 50 index.
+  2. **Trend Filter**: 15m Close is below Intraday VWAP (`Close < VWAP`).
+  3. **Trend Strength**: 14-period ADX > 25 (Strong directional downtrend).
+  4. **Momentum Breakdown**: Fast Stochastic RSI %K crosses down through 80 overbought threshold (`%K[prev] >= 80` and `%K < 80`).
+  5. **Entry Window**: 10:00 AM to 1:30 PM IST (avoids opening noise and late-day consolidation).
+* **Risk Management & Position Sizing**:
+  * **Dual-Guard Capital Sizing**: $\text{Quantity} = \min\left(\left\lfloor \frac{\text{Capital} \times 0.01}{\text{SL Distance}} \right\rfloor, \ \left\lfloor \frac{\text{Slot Margin} \times 5}{\text{Entry Price}} \right\rfloor\right)$
+  * **Max Concurrent Trades**: 2 simultaneous positions with equal capital split.
+  * **Daily Circuit Breaker**: 4% Max Daily Loss threshold (`MAX_DAILY_LOSS_PCT = 0.04`).
+  * **Trailing Stop Loss**: Moves to Breakeven (+0.2% limit buffer) upon reaching +1R profit.
+  * **Dynamic 1:2 R:R**: Target set at $2 \times \text{Initial Risk}$.
+  * **Hard EOD Auto-Squareoff**: 3:00 PM IST.
 
 ---
 
-## 📊 Backtest Performance (58-Day Simulation)
+## 📊 Backtest Performance (59-Day Simulation)
 
-| Metric | Result |
+Simulation run across **59 Trading Days (2026-06-01 to 2026-08-21)** with **₹10,000 Starting Capital**, dynamic compounding, statutory fee models, and 4% daily circuit breaker:
+
+| Metric | Backtest Result |
 | :--- | :--- |
-| **Simulation Period** | **2026-06-01 to 2026-08-21 (59 Trading Days)** |
-| **Initial Capital** | ₹10,000.00 (Max 2 concurrent positions, 5x MIS leverage, Dynamic Compounding) |
-| **Total Trades Taken** | 122 (56 Wins / 66 Losses) |
+| **Initial Capital** | ₹10,000.00 |
+| **Max Concurrent Positions** | 2 Simultaneous Trades (Equal Split) |
+| **Total Trades Taken** | 122 Trades (56 Wins / 66 Losses) |
 | **Win Rate** | **45.90%** |
-| **Net Realized Profit** | **+₹1,920.04 (+19.20% ROI)** *(Post-all Shoonya brokerage & statutory taxes)* |
-| **Profit Factor / MDD** | **1.51** Profit Factor | **-11.81%** Max Drawdown |
-| **Trade Expectancy** | **+₹15.74** / trade |
+| **Gross Realized Profit** | **+₹4,580.69 (+45.81%)** |
+| **Total Statutory Taxes & Fees** | **₹2,660.65** |
+| **Net Realized Profit** | **+₹1,920.04 (+19.20% Net Return)** *(Post-All Charges)* |
+| **Ending Capital Balance** | **₹11,920.04** |
+| **Profit Factor** | **1.51** |
+| **Max Drawdown (MDD)** | **₹1,429.20 (-11.81%)** |
+| **Max Equity Runup** | **+₹3,439.18 (+34.39%)** *(Trough-to-Peak Surge)* |
+| **Max Consecutive Streaks** | **5 Wins in a row** / **9 Losses in a row** |
+| **Largest Single Trade** | **+₹1,104.28 Win** / **-₹772.39 Loss** |
+| **Trade Expectancy** | **+₹15.74 / trade** |
+| **Avg Win / Avg Loss** | **+₹241.72 / -₹135.69** |
 
-> 📊 **Multi-Timeframe Study & Broker Friction Matrix**: See [`docs/backtest_results_and_broker_matrix.md`](docs/backtest_results_and_broker_matrix.md)
+> 📚 **Detailed Studies & Broker Matrix**: See [`docs/backtest_results_and_broker_matrix.md`](docs/backtest_results_and_broker_matrix.md)
 
 ---
 
-## 📁 Repository Structure
+## 🏗️ Repository Structure
 
 ```text
 shoonya_algo/
-├── config.py              # Centralized TradingConfig dataclass & parameters
+├── config.py              # Centralized TradingConfig dataclass & risk thresholds
 │
-├── core/                  # Pure math, indicators & regulatory fee calculators
-│   ├── trade_db.py        # Isolated SQLite trade journals (WAL mode & 2-decimal precision)
+├── core/                  # Core analytics, risk controls, fees & persistence
+│   ├── risk.py            # Stop/target calculations, dual-guard sizing & circuit breaker
+│   ├── capital.py         # Slot margin calculations & persistent paper balances
+│   ├── trade_db.py        # Isolated SQLite trade journals (WAL mode & atomic balance ledger)
 │   ├── indicators.py      # Stoch RSI, ADX, VWAP, Relative Weakness formulas
 │   └── charges.py         # Universal Indian taxes & multi-broker fee engine
 │
-├── strategies/            # Strategy rules, signal extraction & trade lifecycle
+├── strategies/            # Strategy rules, sub-filter boolean flags & simulation
 │   └── vwap_stoch_breakdown.py
 │
 ├── data_pipeline/         # Market data gateway & high-frequency tick caching
-│   ├── data_feed.py       # Smart local caching & live tick fetcher
+│   ├── data_feed.py       # Smart local caching, silent scans & live tick fetcher
 │   └── shoonya_loader.py  # Shoonya 1-year historical downloader
 │
 ├── backtesting/           # Historical simulation & scanning engines
-│   ├── portfolio_sim.py   # Chronological multi-stock portfolio simulator
+│   ├── portfolio_sim.py   # Chronological multi-stock portfolio simulator with compounding
 │   └── scanner.py         # Unconstrained single-stock indicator scanner
 │
-├── live_trading/          # Execution engines
-│   ├── base_engine.py     # Common scheduler, candle aggregator & timing rules
-│   ├── paper_trader.py    # High-frequency guardian virtual paper trading
-│   └── live_trader.py     # Real-money Shoonya OMS order placement
+├── live_trading/          # Execution engines & schedulers
+│   ├── base_engine.py     # Base engine with sleep inhibitor, funnel renderer & reconciler
+│   ├── paper_trader.py    # High-frequency guardian virtual paper trading daemon
+│   └── live_trader.py     # Real-money Shoonya OMS order placement engine
 │
 ├── alerts/                # Multi-channel notification framework
 │   ├── __init__.py        # Public export facade
 │   ├── base.py            # BaseAlertChannel interface & dynamic channel dispatcher
 │   └── telegram.py        # Telegram bot push notifications
 │
-├── tests/                 # Automated test suite (20 unit tests)
-│   ├── test_trade_db.py   # SQLite CRUD, isolation & zero-pollution verification
-│   ├── test_charges.py    # Multi-broker fee engine & statutory tax verification
-│   ├── test_strategy_parity.py # Exact numerical parity between backtest and live
-│   ├── test_alerts.py     # Multi-channel notification dispatch & failure isolation
-│   └── test_live_monitor.py # High-frequency position guardian & 3PM exit resolution
+├── docs/                  # In-depth architectural & operational documentation
+│   ├── strategy_specification.md
+│   ├── backtest_results_and_broker_matrix.md
+│   ├── broker_configuration_guide.md
+│   └── cloud_execution_setup_guide.md
 │
-├── docs/                  # Detailed documentation & operational guides
-│   ├── cloud_execution_setup_guide.md         # 24/7 cloud daemon & Telegram bot setup
-│   ├── broker_configuration_guide.md          # Multi-broker API keys, TOTP & .env guide
-│   ├── strategy_specification.md              # Complete math, rules & indicator logic
-│   └── backtest_results_and_broker_matrix.md  # Multi-timeframe & broker friction study
-│
-├── market_data/           # Local candle cache CSVs (git-ignored)
-├── database/              # SQLite trade journals (git-ignored)
-├── .env.example           # Public secrets template with placeholder values
-├── .env                   # Private broker credentials (git-ignored)
-└── README.md
+└── tests/                 # Comprehensive unit test suite (48 tests)
+    ├── test_risk.py
+    ├── test_funnel_telemetry.py
+    ├── test_sleep_prevention.py
+    ├── test_timing_scheduler.py
+    ├── test_live_reconciliation.py
+    └── ...
 ```
 
 ---
@@ -93,10 +111,10 @@ shoonya_algo/
 git clone https://github.com/vaibhavreddys/algotradingdaily.git
 cd algotradingdaily
 
-# Setup Python 3.12 Virtual Environment
+# Setup Python Virtual Environment
 python -m venv venv
-.\venv\Scripts\activate   # Windows
-# source venv/bin/activate # Linux/macOS
+.\venv\Scripts\activate      # Windows
+# source venv/bin/activate   # Linux/macOS
 
 # Install dependencies
 pip install -r requirements.txt
@@ -104,36 +122,31 @@ pip install -r requirements.txt
 
 ### 2. Configure Credentials:
 ```bash
-Copy-Item .env.example .env   # Windows
-# cp .env.example .env        # Linux/macOS
+cp .env.example .env
 ```
-> 🔐 **Broker Setup Guide**: Detailed instructions for Shoonya, Zerodha, Dhan, Angel One, Upstox, and Fyers are in [`docs/broker_configuration_guide.md`](docs/broker_configuration_guide.md).
+Fill in your credentials in `.env`:
+* `SHOONYA_USER`: Shoonya Client ID
+* `SHOONYA_PWD`: Shoonya Trading Password
+* `SHOONYA_API_KEY`: Shoonya API Key
+* `SHOONYA_VENDOR_CODE`: Shoonya Vendor Code
+* `SHOONYA_TOTP_KEY`: TOTP Secret Key
+* `TELEGRAM_BOT_TOKEN` & `TELEGRAM_CHAT_ID`: (Optional) Instant push alerts
 
 ---
 
-## 💻 Usage
+## ⚡ Usage
 
-### Run Portfolio Simulation (₹10,000 Capital, 2 Slots):
+### Run Portfolio Simulation (Compounded ₹10,000, 2 Slots):
 ```bash
-python -m backtesting.portfolio_sim            # Fast load from local market_data/ cache
-python -m backtesting.portfolio_sim --refresh  # Force fresh parallel re-download (~6s)
-```
-
-### Run Unconstrained Strategy Scanner:
-```bash
-python -m backtesting.scanner
+python backtesting/portfolio_sim.py
 ```
 
 ### Run Live Paper Trading Engine:
 ```bash
-python -m live_trading.paper_trader
+python live_trading/paper_trader.py
 ```
 
-### Run Automated 24/7 Cloud Daemon (GitHub Actions + Telegram):
-* Operates automatically Monday to Friday (09:10 AM – 3:30 PM IST) in the cloud with live push alerts.
-* Setup guide: [`docs/cloud_execution_setup_guide.md`](docs/cloud_execution_setup_guide.md).
-
-### Run Test Suite:
+### Run Test Suite (48 Tests):
 ```bash
 python -m unittest discover tests
 ```

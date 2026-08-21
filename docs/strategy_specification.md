@@ -1,72 +1,69 @@
-# Strategy Specification: VWAP-Stoch Breakdown
+# Strategy Specification: VWAP-Stochastic RSI Breakdown
 
-This document provides the complete mathematical definitions, entry/exit rules, and risk management logic for the **VWAP-Stoch Breakdown** intraday trading strategy.
+## 1. Strategy Overview
 
----
-
-## 📈 Strategy Core Architecture
-
-* **Universe**: NIFTY 50 Constituents (NSE Equities)
-* **Timeframe**: 15-Minute Candles
-* **Direction**: Intraday Short Breakdown (Equities MIS)
-* **Active Entry Window**: 10:00 AM – 1:30 PM IST
-* **Mandatory Square-off**: 15:00 IST (3:00 PM)
-
----
-
-## 🔍 Technical Indicators & Entry Rules
-
-A short entry signal triggers on the close of a 15-minute candle if and only if **all 4 conditions** are satisfied simultaneously:
-
-### 1. Stochastic RSI Momentum Filter
-* **Parameters**: Length = 14, RSI Length = 14, %K = 3, %D = 3
-* **Condition**: `%K` crosses below 80 from the overbought zone within the last 2 bars:
-  $$\text{Stoch\_K}[t] < 80 \quad \text{and} \quad \text{Stoch\_K}[t-1] \ge 80$$
-
-### 2. ADX Trend Strength Filter
-* **Parameters**: Length = 14
-* **Condition**: Trend strength exceeds threshold:
-  $$\text{ADX}[t] > 25$$
-
-### 3. VWAP Confirmation
-* **Condition**: Closing price is trading below the intraday Volume-Weighted Average Price:
-  $$\text{Close}[t] < \text{VWAP}[t]$$
-
-### 4. NIFTY 50 Relative Weakness Filter
-* **Calculation**:
-  $$\Delta_{\text{Stock}}[t] = \frac{\text{Close}_{\text{Stock}}[t] - \text{Open}_{\text{Day\_Stock}}}{\text{Open}_{\text{Day\_Stock}}}$$
-  $$\Delta_{\text{Nifty}}[t] = \frac{\text{Close}_{\text{Nifty}}[t] - \text{Open}_{\text{Day\_Nifty}}}{\text{Open}_{\text{Day\_Nifty}}}$$
-* **Condition**: Stock is underperforming the broader market benchmark:
-  $$\Delta_{\text{Stock}}[t] < \Delta_{\text{Nifty}}[t]$$
+| Parameter | Specification |
+| :--- | :--- |
+| **Strategy Name** | VWAP-Stochastic RSI Breakdown |
+| **Asset Class** | Indian Equities (NSE Cash) |
+| **Trade Direction** | **Short Only** (Intraday MIS) |
+| **Trading Universe** | NIFTY 50 Constituents |
+| **Timeframe** | **15-Minute Candles** |
+| **Leverage** | 5x Intraday MIS Leverage |
+| **Max Concurrent Positions** | 2 Simultaneous Trades (Equal Capital Allocation) |
+| **Daily Loss Limit** | **4% Max Daily Loss Circuit Breaker** |
+| **Risk per Trade** | **1% Fixed Capital Risk (Dual-Guard Sizing)** |
 
 ---
 
-## 🛡️ Risk Management & Position Sizing
+## 2. Quantitative Indicators & Mathematical Formulations
 
-### 1. Dynamic Capital Sizing & Equal Split Compounding
-* **Baseline Capital**: ₹10,000
-* **Max Concurrent Positions**: Configurable (Default: 2 open slots)
-* **Dynamic Slot Margin**: $\text{Slot Margin} = \frac{\text{Current Account Capital}}{\text{Max Concurrent Slots}}$
-* **Exposure with 5x MIS Leverage**: $\text{Exposure} = \text{Slot Margin} \times \text{LEVERAGE\_MIS (5x)}$
-* **Quantity Sizing**:
-  $$\text{Quantity} = \max\left(1, \left\lfloor \frac{\text{Dynamic Exposure}}{\text{Entry Price}} \right\rfloor\right)$$
+### A. Intraday VWAP (Volume Weighted Average Price)
+Calculated continuously from market open (09:15 AM IST) resets daily:
+$$\text{VWAP}_t = \frac{\sum_{i=1}^{t} (\text{Typical Price}_i \times \text{Volume}_i)}{\sum_{i=1}^{t} \text{Volume}_i}$$
 
-### 2. 4% Daily Portfolio Loss Circuit Breaker
-* **Rule**: If today's cumulative realized net PnL reaches $-4.0\%$ of morning opening capital, the trading daemon halts all new entries for the remainder of the session to protect against hostile whipsaw days.
+### B. Fast Stochastic RSI (%K)
+Calculated using 14-period RSI and 14-period Stochastic smoothing:
+$$\text{StochRSI} = \frac{\text{RSI}_{14} - \min(\text{RSI}_{14}, 14)}{\max(\text{RSI}_{14}, 14) - \min(\text{RSI}_{14}, 14)}$$
+$$\%K = \text{SMA}(\text{StochRSI}, 3) \times 100$$
 
-### 2. Stop Loss & Target Calculation
-* **Swing High Lookback**: 3-bar high lookback before entry candle.
-* **Stop-Loss Price**:
-  $$\text{SL} = \max\left(\text{SwingHigh} \times (1 + \text{SWING\_SL\_BUFFER\_PCT}), \ \text{Entry} \times (1 + \text{MIN\_SL\_BUFFER\_PCT})\right)$$
-  *(where $\text{SWING\_SL\_BUFFER\_PCT} = 0.05\%$ and $\text{MIN\_SL\_BUFFER\_PCT} = 0.20\%$)*
-* **Risk (R)**:
-  $$R = \text{SL} - \text{Entry}$$
-* **Profit Target (1:2 R:R)**:
-  $$\text{Target (TP)} = \text{Entry} - (2 \times R)$$
+### C. Average Directional Index (ADX)
+14-period standard Welles Wilder ADX for trend strength confirmation:
+$$\text{ADX}_{14} > 25 \quad (\text{Filters out sideways non-trending consolidation})$$
 
-### 3. Dynamic +1R Trailing Stop Loss to Breakeven
-* During live monitoring, if price drops to $+1R$ profit ($\text{Low} \le \text{Entry} - R$):
-  $$\text{New SL} = \text{Entry Price} \quad (\text{Breakeven / ₹0 Capital Risk})$$
+### D. Relative Weakness Filter
+Calculated against NIFTY 50 Benchmark index (`^NSEI`):
+$$\text{Stock \% Change} = \frac{\text{Close}_t - \text{Open}_{\text{day}}}{\text{Open}_{\text{day}}}$$
+$$\text{NIFTY \% Change} = \frac{\text{NIFTY}_t - \text{NIFTY}_{\text{day open}}}{\text{NIFTY}_{\text{day open}}}$$
+$$\text{Relative Weakness} = \text{Stock \% Change} < \text{NIFTY \% Change}$$
 
-### 4. Mandatory 3:00 PM Auto-Squareoff
-* At 15:00 IST, any remaining open positions are immediately exited at the current market tick price to avoid overnight exposure and broker auto-squareoff penalties.
+---
+
+## 3. Entry Signal Rules
+
+A short trade signal triggers on the close of a 15-minute candle if **ALL** 5 conditions hold:
+1. **Entry Window**: Current time is between **10:00 AM and 1:30 PM IST**.
+2. **Relative Weakness**: Stock is weaker than NIFTY 50 index from day open.
+3. **Price below VWAP**: $\text{Close}_t < \text{VWAP}_t$.
+4. **Strong Trend**: $\text{ADX}_{14} > 25$.
+5. **Stochastic RSI Breakdown**: $\%K_{t-1} \ge 80$ and $\%K_t < 80$.
+
+---
+
+## 4. Risk Management & Position Sizing Architecture
+
+### Dual-Guard Capital Sizing
+Share allocation ensures that trade risk does not exceed 1% of total capital while remaining strictly within margin limits:
+$$\text{Quantity} = \min\left(\left\lfloor \frac{\text{Capital} \times 0.01}{\text{SL Distance}} \right\rfloor, \ \left\lfloor \frac{\text{Slot Margin} \times 5}{\text{Entry Price}} \right\rfloor\right)$$
+
+### Stop Loss & Target Formulations
+* **Initial Stop Loss**:
+  $$\text{SL Price} = \max\left(\text{Swing High}_{\text{prev 5 bars}} \times 1.001, \ \text{Entry Price} \times 1.005\right)$$
+* **1:2 Risk-to-Reward Target**:
+  $$\text{Target Price} = \text{Entry Price} - (2 \times \text{Initial Risk})$$
+* **Trailing Stop Loss (+1R Rule)**:
+  * When price drops to $\text{Entry Price} - 1\text{R}$, SL trails immediately to **Breakeven** ($\text{Entry Price} \times 1.002$).
+* **4% Daily Loss Circuit Breaker**:
+  * If cumulative realized loss today reaches 4% of day-starting capital, new scans are halted immediately.
+* **Mandatory EOD Squareoff**:
+  * All open positions are squared off at **3:00 PM IST** before broker-imposed squareoff.
