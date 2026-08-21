@@ -35,6 +35,7 @@ from data_pipeline import (
     fetch_verified_candles,
     fetch_latest_tick_price,
 )
+from core.risk import calculate_stop_and_target
 from core.trade_db import (
     save_active_position,
     update_trailing_sl,
@@ -265,23 +266,24 @@ class PaperTradingEngine(BaseTradingEngine):
 
     def scan_and_execute_signals(self, nifty_pct_map: pd.Series) -> None:
         """
-        Scans the Nifty 50 universe at 15m candle close and triggers virtual entries if open slots exist.
+        Scans the Nifty 50 universe at 15m candle close, tallies strategy filter funnel telemetry,
+        and triggers virtual entries if open slots exist.
         """
         if self.is_daily_circuit_breaker_active():
-            print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] 🚨 [CIRCUIT BREAKER] 3% Max Daily Loss reached. Rejecting entry for {symbol}.")
-            return
-
-        if len(self.active_positions) >= self.config.MAX_CONCURRENT_POSITIONS:
+            print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] 🚨 [CIRCUIT BREAKER] 4% Max Daily Loss reached. Halting new scan entries.")
             return
 
         symbols = get_nifty50_symbols()
-        for ticker in symbols:
-            if len(self.active_positions) >= self.config.MAX_CONCURRENT_POSITIONS:
-                break
+        total_symbols = len(symbols)
+        eval_count = 0
+        rel_weak_count = 0
+        vwap_count = 0
+        adx_count = 0
+        stoch_count = 0
+        signals_fired = 0
 
+        for ticker in symbols:
             sym_key = f"{ticker.replace('.NS', '')}-EQ"
-            if sym_key in self.active_positions or ticker in self.active_positions:
-                continue
 
             try:
                 raw_df = fetch_verified_candles(ticker, period="5d", interval=self.config.TIMEFRAME)
@@ -292,28 +294,48 @@ class PaperTradingEngine(BaseTradingEngine):
                 if df is None or len(df) == 0:
                     continue
 
+                eval_count += 1
                 last_idx = len(df) - 1
                 last_row = df.iloc[last_idx]
 
-                # Check if breakdown signal fired on the latest closed candle
-                if last_row.get('Signal', False):
-                    entry_price = round(float(last_row['Close']), 2)
-                    swing_high = float(df.iloc[last_idx - self.config.SWING_HIGH_BARS : last_idx]['High'].max())
-                    sl_price = round(max(
-                        swing_high * (1.0 + self.config.SWING_SL_BUFFER_PCT),
-                        entry_price * (1.0 + self.config.MIN_SL_BUFFER_PCT)
-                    ), 2)
-                    risk = round(sl_price - entry_price, 2)
-                    tp_price = round(entry_price - (2.0 * risk), 2)
+                # Tally sub-filter funnel metrics on the latest completed candle
+                if bool(last_row.get('Rel_Weakness_Pass', False)):
+                    rel_weak_count += 1
+                if bool(last_row.get('VWAP_Pass', False)):
+                    vwap_count += 1
+                if bool(last_row.get('ADX_Pass', False)):
+                    adx_count += 1
+                if bool(last_row.get('Stoch_Pass', False)):
+                    stoch_count += 1
 
-                    self.execute_virtual_entry(
-                        symbol=sym_key,
-                        entry_price=entry_price,
-                        sl_price=sl_price,
-                        tp_price=tp_price
-                    )
+                # Check if qualified breakdown signal fired
+                if bool(last_row.get('Signal', False)):
+                    signals_fired += 1
+                    if len(self.active_positions) < self.config.MAX_CONCURRENT_POSITIONS:
+                        if sym_key not in self.active_positions and ticker not in self.active_positions:
+                            entry_price = round(float(last_row['Close']), 2)
+                            swing_high = float(df.iloc[last_idx - self.config.SWING_HIGH_BARS : last_idx]['High'].max())
+                            sl_price, tp_price, risk = calculate_stop_and_target(entry_price, swing_high, config=self.config)
+
+                            self.execute_virtual_entry(
+                                symbol=sym_key,
+                                entry_price=entry_price,
+                                sl_price=sl_price,
+                                tp_price=tp_price
+                            )
             except Exception:
                 continue
+
+        # Render real-time Filter Funnel Telemetry Breakdown
+        self.render_filter_funnel(
+            eval_count=eval_count,
+            total_symbols=total_symbols,
+            rel_weak_count=rel_weak_count,
+            vwap_count=vwap_count,
+            adx_count=adx_count,
+            stoch_count=stoch_count,
+            signals_fired=signals_fired
+        )
 
     def monitor_active_positions(self) -> None:
         """

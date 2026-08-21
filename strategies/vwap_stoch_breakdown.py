@@ -65,14 +65,19 @@ def evaluate_signals(
         )
     )
 
-    # 4. Generate Strategy Entry Signals
+    # 4. Explicit Strategy Sub-Filter Boolean Flags (for telemetry & diagnostics)
+    df['Rel_Weakness_Pass'] = df['Rel_Weakness'].fillna(False)
+    df['VWAP_Pass'] = (df['Close'] < df['VWAP'])
+    df['ADX_Pass'] = (df['ADX'] > 25)
+    df['Stoch_Pass'] = (df['Stoch_K_prev'] >= 80) & (df['Stoch_K'] < 80)
+
+    # 5. Generate Strategy Entry Signals
     df['Signal'] = (
         time_filter &
-        df['Rel_Weakness'] &
-        (df['Stoch_K_prev'] >= 80) & 
-        (df['Stoch_K'] < 80) & 
-        (df['ADX'] > 25) & 
-        (df['Close'] < df['VWAP'])
+        df['Rel_Weakness_Pass'] &
+        df['VWAP_Pass'] &
+        df['ADX_Pass'] &
+        df['Stoch_Pass']
     )
 
     return df

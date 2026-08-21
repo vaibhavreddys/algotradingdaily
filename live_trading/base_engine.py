@@ -162,6 +162,31 @@ class BaseTradingEngine(NorenApi):
         end = datetime.time(self.config.ENTRY_END_HOUR, self.config.ENTRY_END_MINUTE)
         return start <= t <= end
 
+    def render_filter_funnel(
+        self,
+        eval_count: int,
+        total_symbols: int,
+        rel_weak_count: int,
+        vwap_count: int,
+        adx_count: int,
+        stoch_count: int,
+        signals_fired: int
+    ) -> None:
+        """
+        Renders an itemized ASCII filter funnel breakdown after evaluating the trading universe.
+        """
+        open_slots = len(self.active_positions)
+        max_slots = self.config.MAX_CONCURRENT_POSITIONS
+        now_str = datetime.datetime.now().strftime("%H:%M:%S")
+
+        print(f"[{now_str}] 📊 15m Scan Funnel ({eval_count}/{total_symbols} constituents evaluated):")
+        print(f"    • Relative Weakness vs NIFTY : {rel_weak_count:>2d}/{total_symbols} stocks")
+        print(f"    • Price < Intraday VWAP       : {vwap_count:>2d}/{total_symbols} stocks")
+        print(f"    • Strong ADX Trend (ADX > 25) : {adx_count:>2d}/{total_symbols} stocks")
+        print(f"    • Stochastic RSI Breakdown    : {stoch_count:>2d}/{total_symbols} stocks")
+        print(f"    ---------------------------------------------")
+        print(f"    ⭐ Qualified Entries Fired    : {signals_fired:>2d} trade(s) | Open Slots: {open_slots}/{max_slots}")
+
     def is_squareoff_time(self, now: Optional[datetime.datetime] = None) -> bool:
         """Checks if current time is past mandatory square-off time (3:00 PM)."""
         now = now or datetime.datetime.now()
