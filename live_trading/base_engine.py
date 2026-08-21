@@ -297,7 +297,7 @@ class BaseTradingEngine(NorenApi):
         target_mode = (mode or self.config.TRADING_MODE).lower()
         db_path = get_db_path(target_mode)
         
-        # 1. Startup Sanity Diagnostics & Automated Reconciler (Issue #15)
+        # 1. Startup Sanity Diagnostics & Automated Calendar Reconciler (Issue #15)
         stale_positions = get_stale_positions(mode=target_mode)
         if stale_positions:
             print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] ⚠️ Detected {len(stale_positions)} stale position(s) from past session(s). Starting automated reconciliation...")
@@ -308,7 +308,28 @@ class BaseTradingEngine(NorenApi):
         else:
             print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] ✅ Database Sanity Check: 0 stale positions detected in {db_path}.")
 
-        # 2. Restore active positions into in-memory state
+        # 2. Live Broker Position Book Cross-Verification (Issue #16)
+        if target_mode == "live":
+            try:
+                broker_positions = self.get_positions()
+                if isinstance(broker_positions, list):
+                    broker_net_map = {
+                        p.get('tsym'): int(p.get('netqty', 0))
+                        for p in broker_positions if p.get('tsym')
+                    }
+                    active_db_positions = get_active_positions(mode="live")
+                    for pos in active_db_positions:
+                        sym = pos['symbol']
+                        broker_qty = broker_net_map.get(sym, 0)
+                        if broker_qty == 0:
+                            print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] 🔍 Broker Cross-Check: {sym} has 0 net qty at Shoonya. Reconciling...")
+                            reconciled = reconcile_stale_positions(mode="live", specific_symbol=sym)
+                            for r in reconciled:
+                                print(f"    ✅ Reconciled Broker Auto-Close: {r['symbol']} | Exited @ ₹{r['exit_price']} | Net PnL: ₹{r['net_pnl']:+,.2f}")
+            except Exception as e:
+                print(f"⚠️ Live broker position verification skipped: {e}")
+
+        # 3. Restore active positions into in-memory state
         self.active_positions.clear()
         saved = get_active_positions(mode=target_mode)
         for pos in saved:

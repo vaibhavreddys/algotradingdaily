@@ -329,7 +329,7 @@ def get_stale_positions(mode: Optional[str] = None) -> List[Dict[str, Any]]:
     return stale_list
 
 
-def reconcile_stale_positions(mode: str = "paper") -> List[Dict[str, Any]]:
+def reconcile_stale_positions(mode: str = "paper", specific_symbol: Optional[str] = None) -> List[Dict[str, Any]]:
     """
     Automated pre-market self-healing reconciler (Issue #15):
     Inspects active_positions for past-session orphaned trades, replays their candle
@@ -341,7 +341,12 @@ def reconcile_stale_positions(mode: str = "paper") -> List[Dict[str, Any]]:
     from data_pipeline.data_feed import load_candle_data
     from strategies.vwap_stoch_breakdown import simulate_single_trade
 
-    stale_trades = get_stale_positions(mode=mode)
+    if specific_symbol:
+        active_list = get_active_positions(mode=mode)
+        stale_trades = [p for p in active_list if p.get('symbol') == specific_symbol]
+    else:
+        stale_trades = get_stale_positions(mode=mode)
+
     if not stale_trades:
         return []
 
