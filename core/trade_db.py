@@ -418,23 +418,17 @@ def reconcile_stale_positions(mode: str = "paper", specific_symbol: Optional[str
         ), 2)
         net_pnl = round(gross_pnl - taxes_fees, 2)
 
-        # 3. Atomically archive to trade_history and clear from active_positions
-        created_at_now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        with get_db_connection(mode=mode) as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
-                INSERT INTO trade_history (
-                    symbol, order_type, entry_time, exit_time, 
-                    entry_price, exit_price, quantity, result, 
-                    gross_pnl, taxes_fees, net_pnl, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                symbol, order_type, entry_time_str, resolved_exit_time,
-                entry_price, resolved_exit_price, quantity, resolved_result,
-                gross_pnl, taxes_fees, net_pnl, created_at_now
-            ))
-            cursor.execute("DELETE FROM active_positions WHERE symbol = ?", (symbol,))
-            conn.commit()
+        # 3. Atomically archive to trade_history and update balance ledger via close_and_archive_position
+        close_and_archive_position(
+            symbol=symbol,
+            exit_price=resolved_exit_price,
+            exit_time=resolved_exit_time,
+            result=resolved_result,
+            gross_pnl=gross_pnl,
+            taxes_fees=taxes_fees,
+            net_pnl=net_pnl,
+            mode=mode
+        )
 
         reconciled_records.append({
             'symbol': symbol,
@@ -448,6 +442,24 @@ def reconcile_stale_positions(mode: str = "paper", specific_symbol: Optional[str
         })
 
     return reconciled_records
+
+
+def get_today_realized_pnl(mode: str = "paper") -> float:
+    """
+    Queries the SQLite trade_history table and returns the sum of today's realized net PnL in INR.
+    """
+    init_db(mode)
+    today_prefix = datetime.datetime.now().strftime("%Y-%m-%d")
+    with get_db_connection(mode) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT SUM(net_pnl) FROM trade_history WHERE exit_time LIKE ?;",
+            (f"{today_prefix}%",)
+        )
+        row = cursor.fetchone()
+        if row and row[0] is not None:
+            return float(row[0])
+    return 0.0
 
 
 if __name__ == "__main__":
@@ -497,21 +509,3 @@ if __name__ == "__main__":
     print("STATUS: ✅ Both SQLite databases initialized and ready (WAL Mode & 5000ms Busy Timeout Enabled).")
     print("TIP   : Run 'python -m unittest tests/test_trade_db.py' for full test suite.")
     print("=======================================================\n")
-
-
-def get_today_realized_pnl(mode: str = "paper") -> float:
-    """
-    Queries the SQLite trade_history table and returns the sum of today's realized net PnL in INR.
-    """
-    init_db(mode)
-    today_prefix = datetime.datetime.now().strftime("%Y-%m-%d")
-    with get_db_connection(mode) as conn:
-        cursor = conn.cursor()
-        cursor.execute(
-            "SELECT SUM(net_pnl) FROM trade_history WHERE exit_time LIKE ?;",
-            (f"{today_prefix}%",)
-        )
-        row = cursor.fetchone()
-        if row and row[0] is not None:
-            return float(row[0])
-    return 0.0
