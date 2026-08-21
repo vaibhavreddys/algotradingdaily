@@ -229,6 +229,34 @@ def print_simulation_report(
     avg_win = gross_gains / win_count if win_count > 0 else 0.0
     avg_loss = gross_losses / loss_count if loss_count > 0 else 0.0
 
+    # Streak & Runup Metrics
+    largest_win = tdf['Net PnL (₹)'].max() if not tdf.empty else 0.0
+    largest_loss = tdf['Net PnL (₹)'].min() if not tdf.empty else 0.0
+
+    cur_win_streak = 0
+    max_win_streak = 0
+    cur_loss_streak = 0
+    max_loss_streak = 0
+
+    if not tdf.empty:
+        for pnl in tdf['Net PnL (₹)']:
+            if pnl > 0:
+                cur_win_streak += 1
+                cur_loss_streak = 0
+                if cur_win_streak > max_win_streak:
+                    max_win_streak = cur_win_streak
+            else:
+                cur_loss_streak += 1
+                cur_win_streak = 0
+                if cur_loss_streak > max_loss_streak:
+                    max_loss_streak = cur_loss_streak
+
+    # Max Equity Runup (Trough-to-Peak Surge)
+    running_trough = tdf['Capital'].cummin() if not tdf.empty else pd.Series([initial_capital])
+    runup_series = tdf['Capital'] - running_trough if not tdf.empty else pd.Series([0.0])
+    max_runup_val = runup_series.max() if not runup_series.empty else 0.0
+    max_runup_pct = (max_runup_val / initial_capital) * 100
+
     print("\n=======================================================")
     print(f"      STRATEGY: {STRATEGY_NAME.upper()}")
     print(f"      ₹{initial_capital:,.0f} CAPITAL SIMULATION (MAX {config.MAX_CONCURRENT_POSITIONS} CONCURRENT)   ")
@@ -250,6 +278,9 @@ def print_simulation_report(
     print("-------------------------------------------------------")
     print(f"Profit Factor          : {profit_factor:.2f}")
     print(f"Max Drawdown (MDD)     : ₹{mdd_val:,.2f} (-{mdd_pct:.2f}%)")
+    print(f"Max Equity Runup       : +₹{max_runup_val:,.2f} (+{max_runup_pct:.2f}%)")
+    print(f"Win / Loss Streak      : {max_win_streak} Wins / {max_loss_streak} Losses (Max Consecutive)")
+    print(f"Largest Win / Loss     : +₹{largest_win:,.2f} / -₹{abs(largest_loss):,.2f}")
     print(f"Trade Expectancy       : +₹{expectancy:.2f} / trade" if expectancy >= 0 else f"Trade Expectancy       : -₹{abs(expectancy):.2f} / trade")
     print(f"Avg Win / Avg Loss     : +₹{avg_win:,.2f} / -₹{avg_loss:,.2f}")
     print("=======================================================\n")
