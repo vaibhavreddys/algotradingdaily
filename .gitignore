@@ -14,11 +14,12 @@ venv/
 # Python Cache & Bytecode
 __pycache__/
 *.py[cod]
-*$py.class
+*.class
 
 # IDE & Editor Settings
 .vscode/
 .idea/
+*.code-workspace
 
 # Market Data Archives (Disposable Cache)
 market_data/*
