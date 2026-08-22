@@ -10,11 +10,14 @@ ES_AWAYMODE_REQUIRED = 0x00000040
 @contextmanager
 def prevent_sleep_context():
     """
-    Context manager to programmatically prevent Windows OS from entering sleep or standby mode
+    Context manager to programmatically prevent the OS from entering sleep or standby mode
     during the execution of the trading daemon (including overnight runs, pre-market waiting, and live sessions).
     Restores normal power settings upon graceful shutdown or Ctrl+C.
-    Clean no-op on non-Windows platforms (Linux, macOS).
+      - Windows: Win32 SetThreadExecutionState
+      - macOS: caffeinate subprocess
+      - Linux: clean no-op
     """
+    proc = None
     if sys.platform == "win32":
         import ctypes
         try:
@@ -24,6 +27,22 @@ def prevent_sleep_context():
             print("[POWER] ⚡ System sleep inhibitor ACTIVATED (Process will stay awake).")
         except Exception as e:
             print(f"[POWER] ⚠️ Could not set thread execution state: {e}")
+    elif sys.platform == "darwin":
+        import shutil
+        import subprocess
+        try:
+            caffeinate_bin = shutil.which("caffeinate")
+            if caffeinate_bin:
+                proc = subprocess.Popen(
+                    [caffeinate_bin, "-is"],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+                print("[POWER] ⚡ System sleep inhibitor ACTIVATED (Process will stay awake).")
+            else:
+                print("[POWER] ⚠️ 'caffeinate' not found; system may sleep during long waits.")
+        except Exception as e:
+            print(f"[POWER] ⚠️ Could not start caffeinate: {e}")
     try:
         yield
     finally:
@@ -31,6 +50,13 @@ def prevent_sleep_context():
             import ctypes
             try:
                 ctypes.windll.kernel32.SetThreadExecutionState(ES_CONTINUOUS)
+                print("[POWER] 💤 System sleep inhibitor RELEASED (Restored OS power defaults).")
+            except Exception:
+                pass
+        elif proc is not None:
+            try:
+                proc.terminate()
+                proc.wait(timeout=5)
                 print("[POWER] 💤 System sleep inhibitor RELEASED (Restored OS power defaults).")
             except Exception:
                 pass
