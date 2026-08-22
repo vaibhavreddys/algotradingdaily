@@ -32,6 +32,7 @@ SHOONYA_APPEND_EQ = _env_bool("OPENALGO_SHOONYA_APPEND_EQ", False)
 DELAY_SECONDS = float(os.getenv("OPENALGO_DELAY_SECONDS", "5"))
 MAX_RETRIES = int(os.getenv("OPENALGO_MAX_RETRIES", "5"))
 CHUNK_SIZE_DAYS = int(os.getenv("OPENALGO_CHUNK_SIZE_DAYS", "30"))
+PROBE_DELAY_SECONDS = float(os.getenv("OPENALGO_PROBE_DELAY_SECONDS", "1"))
 
 
 def validate_settings() -> None:
@@ -42,6 +43,8 @@ def validate_settings() -> None:
         raise RuntimeError("OPENALGO_HOST is not configured.")
     if DELAY_SECONDS < 0:
         raise RuntimeError("OPENALGO_DELAY_SECONDS cannot be negative.")
+    if PROBE_DELAY_SECONDS < 0:
+        raise RuntimeError("OPENALGO_PROBE_DELAY_SECONDS cannot be negative.")
     if MAX_RETRIES < 1:
         raise RuntimeError("OPENALGO_MAX_RETRIES must be at least 1.")
     if not 1 <= CHUNK_SIZE_DAYS <= 30:

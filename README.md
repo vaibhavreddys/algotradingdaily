@@ -156,6 +156,17 @@ frame = BacktestDataReader().get_full_dataframe(symbol="RELIANCE")
 close_matrix = BacktestDataReader().get_vectorbt_matrix()
 ```
 
+#### Broker history boundary
+
+Brokers serve intraday candles only up to a limited lookback. On every download,
+the earliest servable date is detected automatically (binary search over small
+probe windows against a liquid symbol) and cached in `download_state.sqlite`;
+requested ranges reaching below that floor are clamped with a warning, and
+ranges lying entirely below it are rejected cleanly. Pass `--refresh-boundary`
+to force re-detection after broker-side changes. Tunables:
+`OPENALGO_PROBE_SYMBOL` (default `RELIANCE`) and
+`OPENALGO_PROBE_DELAY_SECONDS` (default `1`).
+
 #### Browse the store visually
 
 ```bash

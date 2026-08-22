@@ -31,6 +31,7 @@ class TestOpenAlgoIngestion(unittest.TestCase):
             OPENALGO_HOST="http://openalgo.test",
             SHOONYA_APPEND_EQ=False,
             DELAY_SECONDS=0,
+            PROBE_DELAY_SECONDS=0,
         )
         self.settings_patch.start()
 
@@ -90,6 +91,47 @@ class TestOpenAlgoIngestion(unittest.TestCase):
         from data_pipeline.openalgo_ingestion import BacktestDataReader
         frame = BacktestDataReader().get_full_dataframe(symbol="RELIANCE")
         self.assertEqual(frame["volume"].tolist(), [0, 0])
+
+    def test_history_boundary_detection_and_clamping(self):
+        class BoundaryClient:
+            def __init__(self):
+                self.calls = []
+
+            def history(self, **kwargs):
+                self.calls.append((kwargs["start_date"], kwargs["end_date"]))
+                if kwargs["start_date"] >= "2025-12-28":
+                    return pd.DataFrame(
+                        {"Open": [1.0], "High": [1.0], "Low": [1.0], "Close": [1.0], "Volume": [1]},
+                        index=pd.DatetimeIndex(["2026-01-02T09:15:00+00:00"], name="timestamp"),
+                    )
+                return {"error_type": "no_data", "message": "none"}
+
+        self.client = BoundaryClient()
+        engine = self.engine_class(client=self.client)
+        boundary = engine.detect_history_start(force=True)
+        self.assertEqual(boundary, "2025-12-28")
+
+        calls_before_ingest = len(self.client.calls)
+        engine.ingest_date_range(["TEST"], "2025-01-01", "2026-01-10")
+        ingest_calls = self.client.calls[calls_before_ingest:]
+        self.assertTrue(ingest_calls)
+        self.assertEqual(ingest_calls[0][0], "2025-12-28")
+        self.assertTrue(engine.is_chunk_completed("TEST", "2025-12-28", "2026-01-10"))
+
+    def test_range_entirely_before_boundary_aborts_without_calls(self):
+        class SilentClient:
+            def __init__(self):
+                self.calls = []
+
+            def history(self, **kwargs):
+                self.calls.append(kwargs)
+
+        self.client = SilentClient()
+        engine = self.engine_class(client=self.client)
+        engine._meta_set(engine.HISTORY_START_KEY, "2026-06-01")
+        engine.ingest_date_range(["TEST"], "2025-01-01", "2025-12-31")
+        self.assertEqual(self.client.calls, [])
+        self.assertFalse(engine.is_chunk_completed("TEST", "2025-01-01", "2025-01-30"))
 
     def test_no_data_marks_completed_and_broker_error_marks_failed(self):
         no_data_engine = self._engine({"error_type": "no_data", "message": "holiday"})

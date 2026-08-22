@@ -2,6 +2,7 @@
 
 import datetime as dt
 import logging
+import os
 import sqlite3
 import time
 from collections.abc import Mapping
@@ -81,6 +82,28 @@ class ThrottledIngestionEngine:
                 )
                 """
             )
+            con.execute(
+                """
+                CREATE TABLE IF NOT EXISTS meta (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL,
+                    updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+
+    def _meta_get(self, key: str) -> str | None:
+        with sqlite3.connect(settings.STATE_DB_PATH) as con:
+            row = con.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
+        return row[0] if row else None
+
+    def _meta_set(self, key: str, value: str) -> None:
+        with sqlite3.connect(settings.STATE_DB_PATH) as con:
+            con.execute(
+                "INSERT INTO meta (key, value) VALUES (?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated=CURRENT_TIMESTAMP",
+                (key, value),
+            )
 
     @staticmethod
     def _format_symbol(symbol: str) -> str:
@@ -111,6 +134,86 @@ class ThrottledIngestionEngine:
         end = today or dt.date.today()
         start = end - dt.timedelta(days=total_days - 1)
         return cls.generate_date_range_chunks(start.isoformat(), end.isoformat())
+
+    PROBE_SYMBOL = "RELIANCE"
+    PROBE_WINDOW_DAYS = 10
+    PROBE_REFINE_DAYS = 3
+    PROBE_REFINE_LIMIT = 20
+    SEARCH_SPAN_DAYS = 1100
+    HISTORY_START_KEY = "broker_history_start"
+
+    def _probe_window(self, symbol: str, start: dt.date, end: dt.date) -> bool:
+        """True when the broker serves at least one candle inside [start, end]."""
+        response = self.client.history(
+            symbol=self._format_symbol(symbol),
+            exchange=settings.EXCHANGE,
+            interval=settings.INTERVAL,
+            start_date=start.isoformat(),
+            end_date=end.isoformat(),
+            source="api",
+        )
+        if isinstance(response, Mapping):
+            return response.get("error_type") != "no_data"
+        return isinstance(response, pd.DataFrame) and not response.empty
+
+    def detect_history_start(self, force: bool = False) -> str | None:
+        """Earliest date (YYYY-MM-DD) the broker serves minute candles; cached in state DB."""
+        if not force:
+            cached = self._meta_get(self.HISTORY_START_KEY)
+            if cached:
+                return cached
+        symbol = os.getenv("OPENALGO_PROBE_SYMBOL", self.PROBE_SYMBOL).upper()
+        today = dt.date.today()
+        lo = today - dt.timedelta(days=self.SEARCH_SPAN_DAYS)
+        hi = today
+        logger.info("Detecting broker history boundary via %s ...", symbol)
+        try:
+            while lo < hi:
+                mid = lo + (hi - lo) // 2
+                if self._probe_window(symbol, mid, mid + dt.timedelta(days=self.PROBE_WINDOW_DAYS - 1)):
+                    hi = mid
+                else:
+                    lo = mid + dt.timedelta(days=1)
+                time.sleep(settings.PROBE_DELAY_SECONDS)
+            cursor = lo
+            for _ in range(self.PROBE_REFINE_LIMIT):
+                if cursor > today:
+                    break
+                if self._probe_window(symbol, cursor, cursor + dt.timedelta(days=self.PROBE_REFINE_DAYS - 1)):
+                    break
+                cursor += dt.timedelta(days=1)
+                time.sleep(settings.PROBE_DELAY_SECONDS)
+        except Exception as exc:
+            logger.warning("History boundary detection failed (%s); clamping disabled", exc)
+            return None
+        if cursor > today:
+            logger.error("Broker serves no history within the searched span")
+            return None
+        boundary = cursor.isoformat()
+        self._meta_set(self.HISTORY_START_KEY, boundary)
+        logger.info("Broker history starts at %s", boundary)
+        return boundary
+
+    def resolve_start(self, requested_start: str, end_date: str | None = None) -> str | None:
+        """Clamp a requested range start to broker-available history.
+
+        Returns the effective start date, or None when the entire range predates it.
+        """
+        effective = requested_start
+        boundary = self.detect_history_start()
+        if boundary is not None and boundary > effective:
+            logger.warning(
+                "Requested start %s predates earliest broker data (%s); clamping to %s",
+                effective, boundary, boundary,
+            )
+            effective = boundary
+        if end_date is not None and effective > end_date:
+            logger.error(
+                "Nothing to download: [%s → %s] lies entirely before earliest broker data (%s)",
+                requested_start, end_date, boundary,
+            )
+            return None
+        return effective
 
     def is_chunk_completed(self, symbol: str, start: str, end: str) -> bool:
         with sqlite3.connect(settings.STATE_DB_PATH) as con:
@@ -203,7 +306,15 @@ class ThrottledIngestionEngine:
             time.sleep(settings.DELAY_SECONDS)
 
     def ingest_date_range(self, symbols: Iterable[str], start_date: str, end_date: str) -> None:
-        self.ingest(symbols, self.generate_date_range_chunks(start_date, end_date))
+        effective_start = self.resolve_start(start_date, end_date)
+        if effective_start is None:
+            return
+        self.ingest(symbols, self.generate_date_range_chunks(effective_start, end_date))
 
     def ingest_index(self, symbols: Iterable[str], lookback_days: int) -> None:
-        self.ingest(symbols, self.generate_chunks(lookback_days))
+        end = dt.date.today()
+        requested_start = (end - dt.timedelta(days=lookback_days - 1)).isoformat()
+        effective_start = self.resolve_start(requested_start, end.isoformat())
+        if effective_start is None:
+            return
+        self.ingest(symbols, self.generate_date_range_chunks(effective_start, end.isoformat()))

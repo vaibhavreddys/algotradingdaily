@@ -19,6 +19,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--days", type=int, default=365, help="Lookback days when no dates are specified")
     parser.add_argument("--start-date", help="Start date (YYYY-MM-DD); requires --end-date")
     parser.add_argument("--end-date", help="End date (YYYY-MM-DD); requires --start-date")
+    parser.add_argument("--refresh-boundary", action="store_true",
+                        help="Re-detect the earliest date the broker serves before downloading")
     return parser
 
 
@@ -104,6 +106,10 @@ def main(argv: list[str] | None = None) -> int:
         if args.limit:
             symbols = symbols[:args.limit]
         engine = ThrottledIngestionEngine()
+        if args.refresh_boundary:
+            engine.detect_history_start(force=True)
+        else:
+            engine.detect_history_start()
         if args.start_date:
             engine.ingest_date_range(symbols, args.start_date, args.end_date)
         else:
