@@ -133,6 +133,26 @@ class TestOpenAlgoIngestion(unittest.TestCase):
         self.assertEqual(self.client.calls, [])
         self.assertFalse(engine.is_chunk_completed("TEST", "2025-01-01", "2025-01-30"))
 
+    def test_dataset_card_contains_stats_and_recipes(self):
+        import duckdb
+
+        con = duckdb.connect(str(self.settings.DB_PATH))
+        try:
+            con.execute("""CREATE TABLE ohlcv_1m (timestamp TIMESTAMP WITH TIME ZONE, symbol VARCHAR,
+                           exchange VARCHAR, open DOUBLE, high DOUBLE, low DOUBLE, close DOUBLE,
+                           volume BIGINT, PRIMARY KEY (timestamp, symbol, exchange))""")
+            con.execute("INSERT INTO ohlcv_1m VALUES ('2026-01-05 09:15:00+00','RELIANCE','NSE',1,2,0.5,1.5,10)")
+        finally:
+            con.close()
+
+        from data_pipeline.openalgo_ingestion.publish import build_dataset_card
+
+        card = build_dataset_card("vaibhavfury/StockData")
+        for marker in ("Candles | 1", "Symbols | 1",
+                       "hf://datasets/vaibhavfury/StockData", "time_bucket",
+                       "do not redistribute", "hf_stock_data.py"):
+            self.assertIn(marker, card)
+
     def test_no_data_marks_completed_and_broker_error_marks_failed(self):
         no_data_engine = self._engine({"error_type": "no_data", "message": "holiday"})
         no_data_engine.ingest_date_range(["RELIANCE"], "2026-08-20", "2026-08-20")

@@ -12,7 +12,8 @@ from .scraper import NSEConstituentFetcher
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="OpenAlgo historical-data ingestion")
-    parser.add_argument("--action", choices=("download", "read", "scrape", "stats", "archive", "aggregate", "health"), required=True)
+    parser.add_argument("--action", choices=("download", "read", "scrape", "stats", "archive", "aggregate", "health", "publish"), required=True)
+    parser.add_argument("--repo", help="HF dataset repo for publish (default $OPENALGO_HF_REPO or vaibhavfury/StockData)")
     parser.add_argument("--index", help="Live NSE index, e.g. NIFTY50 or NIFTY200")
     parser.add_argument("--symbols", help="Comma-separated NSE symbols, e.g. RELIANCE,TCS,INFY")
     parser.add_argument("--limit", type=int, default=0, help="Limit the selected universe")
@@ -91,6 +92,12 @@ def main(argv: list[str] | None = None) -> int:
         logger.info("Building aggregated timeframe tables...")
         archive.build_all_aggregates()
         logger.info("Aggregates built successfully.")
+        return 0
+
+    if args.action == "publish":
+        from .publish import DEFAULT_REPO, publish
+
+        publish(args.repo or DEFAULT_REPO)
         return 0
 
     try:

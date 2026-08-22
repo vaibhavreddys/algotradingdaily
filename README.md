@@ -219,6 +219,34 @@ cp market_data/openalgo/backtest_data.duckdb market_data/openalgo/backup/backtes
 > were rebuilt from the cleaned store. The pre-cleanup snapshot is preserved
 > at `market_data/openalgo/backup/backtest_data_pre_cleanup.duckdb`.
 
+### Team distribution via Hugging Face
+
+The store is mirrored to the private dataset `vaibhavfury/StockData` as
+Hive-partitioned Parquet (`data/year=/month=`) plus a generated dataset card
+and a standalone helper script at `tools/hf_stock_data.py`.
+
+Publish a fresh snapshot (requires `HF_TOKEN` with write access):
+
+```bash
+python openalgo_ingest.py --action publish            # export + upload (~1 min)
+python openalgo_ingest.py --action publish --repo other/repo
+```
+
+Teammates need only an HF token with read access — no clone of this repo:
+
+```bash
+pip install huggingface_hub duckdb pandas
+export HF_TOKEN=hf_xxx
+
+# fetch the helper from the dataset repo itself, then:
+python hf_stock_data.py query                          # zero-download streaming SQL over HTTP
+python hf_stock_data.py parquet --out ./stockdata --months 2026-07 2026-08   # filtered raw download
+python hf_stock_data.py duckdb  --out ./stockdata --symbol RELIANCE --aggregates  # offline DuckDB
+```
+
+Timestamps are stored as UTC instants; partition columns follow IST calendar
+months. Exchange data is licensed for internal use only — do not redistribute.
+
 ### Run Live Paper Trading Daemon:
 ```bash
 python live_trading/paper_trader.py
