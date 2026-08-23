@@ -37,7 +37,7 @@ def run_strategy_scan(config: TradingConfig = CONFIG, refresh: bool = False):
     print("=======================================================")
 
     nifty_pct_map = fetch_nifty_benchmark(
-        period=config.BACKTEST_PERIOD,
+        period=getattr(config, 'BACKTEST_PERIOD', '60d'),
         interval=getattr(config, 'TIMEFRAME', TIMEFRAME),
         force_refresh=refresh
     )

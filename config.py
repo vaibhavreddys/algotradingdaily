@@ -90,10 +90,6 @@ class TradingConfig:
     MAX_RISK_PER_TRADE_PCT: float = 0.01  # 1% fixed capital risk per trade
     MAX_DAILY_LOSS_PCT: float = 0.04      # 4% max daily portfolio loss circuit breaker
 
-    # -------------------------------------------------------------------------
-    # Market Data & Timeframe Settings
-    # -------------------------------------------------------------------------
-    BACKTEST_PERIOD: str = "60d"
 
     # -------------------------------------------------------------------------
     # Alerts & Guardian Polling

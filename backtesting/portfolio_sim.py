@@ -33,7 +33,7 @@ from core.capital import get_slot_margin, get_slot_exposure
 from core.risk import is_daily_loss_limit_reached
 from core.report import print_simulation_report, print_multi_broker_matrix
 from config import CONFIG, TradingConfig
-from data_pipeline import get_nifty50_symbols, fetch_nifty_benchmark, load_candle_data
+from data_pipeline import get_nifty50_symbols, get_available_symbols, fetch_nifty_benchmark, load_candle_data
 from strategies.vwap_stoch_breakdown import (
     STRATEGY_NAME,
     TIMEFRAME,
@@ -51,7 +51,7 @@ def _scan_single_symbol(ticker, nifty_pct_map, config: TradingConfig, refresh: b
     try:
         raw_df = load_candle_data(
             ticker,
-            period=config.BACKTEST_PERIOD,
+            period=getattr(config, 'BACKTEST_PERIOD', '60d'),
             interval=getattr(config, 'TIMEFRAME', TIMEFRAME),
             force_refresh=refresh,
             verbose=False,
@@ -183,13 +183,19 @@ def simulate_portfolio_execution(signals_df: pd.DataFrame, config: TradingConfig
     return tdf, capital, total_charges_paid, final_exposure, final_slot_margin
 
 
-def run_portfolio_simulation(config: TradingConfig = CONFIG, refresh: bool = False):
+def run_portfolio_simulation(
+    config: TradingConfig = CONFIG, 
+    refresh: bool = False, 
+    universe: str = "ALL",
+    period: str = "60d"
+):
     """Main orchestrator for the portfolio simulation."""
-    symbols = get_nifty50_symbols()
+    symbols = get_available_symbols(universe=universe)
     nifty_pct_map = fetch_nifty_benchmark(
-        period=config.BACKTEST_PERIOD,
+        period=getattr(config, 'BACKTEST_PERIOD', '60d'),
         interval=getattr(config, 'TIMEFRAME', TIMEFRAME),
-        force_refresh=refresh
+        force_refresh=refresh,
+        universe=universe
     )
     signals_df = scan_universe_signals(symbols, nifty_pct_map, config=config, refresh=refresh)
 
@@ -229,5 +235,18 @@ if __name__ == "__main__":
         action="store_true",
         help="Force re-download of fresh 15m candles (bypasses local market_data/ archives)"
     )
+    parser.add_argument(
+        "--universe",
+        type=str,
+        default="ALL",
+        choices=["ALL", "NIFTY50", "NIFTY200"],
+        help="Stock universe to simulate (default: ALL 200 constituents)"
+    )
+    parser.add_argument(
+        "--period",
+        type=str,
+        default="60d",
+        help="Historical lookback period when downloading via Yahoo Finance fallback (default: 60d)"
+    )
     args = parser.parse_args()
-    run_portfolio_simulation(refresh=args.refresh)
+    run_portfolio_simulation(refresh=args.refresh, universe=args.universe, period=args.period)

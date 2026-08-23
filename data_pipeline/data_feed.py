@@ -185,13 +185,57 @@ def fetch_nifty_benchmark(
     period: str = "60d",
     interval: str = "15m",
     force_refresh: bool = False,
+    universe: str = "NIFTY50"
 ) -> pd.Series:
     """
-    Retrieves NIFTY 50 Benchmark (^NSEI) from local archive or yfinance
-    and computes intraday % return from Day Open.
-    Returns a Series indexed by timestamp for fast reindexing against stock candles.
+    Retrieves Benchmark for Relative Weakness calculation:
+      - If DuckDB exists, builds high-fidelity equal-weighted market index over the full DuckDB historical span.
+      - Otherwise loads NIFTY 50 Benchmark (^NSEI) from local archive or yfinance.
     """
-    print("\n[1/3] Fetching NIFTY 50 Benchmark (^NSEI) for Relative Weakness calculation...")
+    print("\n[1/3] Fetching Benchmark for Relative Weakness calculation...")
+    
+    # Tier 1: DuckDB Full Historical Span Index
+    if os.path.exists(settings.DB_PATH) and not force_refresh:
+        try:
+            reader = BacktestDataReader()
+            table_name = f"ohlcv_{interval}"
+            duck = reader._duck()
+            with reader._connect(duck) as conn:
+                query = f"""
+                    WITH daily_first AS (
+                        SELECT 
+                            symbol,
+                            CAST(timestamp AS DATE) as trade_date,
+                            FIRST(open) as day_open
+                        FROM {table_name}
+                        GROUP BY symbol, CAST(timestamp AS DATE)
+                    ),
+                    bar_pcts AS (
+                        SELECT 
+                            b.timestamp,
+                            (b.close - d.day_open) / d.day_open as pct_change
+                        FROM {table_name} b
+                        JOIN daily_first d 
+                          ON b.symbol = d.symbol 
+                         AND CAST(b.timestamp AS DATE) = d.trade_date
+                    )
+                    SELECT 
+                        timestamp,
+                        AVG(pct_change) as avg_pct
+                    FROM bar_pcts
+                    GROUP BY timestamp
+                    ORDER BY timestamp
+                """
+                res_df = conn.execute(query).df()
+                if not res_df.empty:
+                    res_df['timestamp'] = reader._normalize_timestamp(res_df['timestamp'])
+                    res_df = res_df.set_index('timestamp')
+                    print(f"  🦆 Benchmark generated dynamically from DuckDB ({table_name} | {len(res_df)} candles)")
+                    return res_df['avg_pct']
+        except Exception:
+            pass
+
+    # Tier 2: Local CSV Archive / yfinance
     nifty_raw = load_candle_data("^NSEI", period=period, interval=interval, force_refresh=force_refresh)
     if nifty_raw is None or nifty_raw.empty:
         print("⚠️ Warning: Could not fetch Nifty index data.")
