@@ -22,9 +22,14 @@ from typing import Optional, Dict, Any
 from config import CONFIG, TradingConfig
 from core.indicators import compute_stoch_rsi, compute_adx, compute_vwap, compute_relative_weakness
 from core.trade_db import TradeExitReason
+from core.market_calendar import get_strategy_entry_window, get_squareoff_time, is_continuous_market
 
 STRATEGY_NAME = "VWAP-Stoch Breakdown"
 STRATEGY_VERSION = "1.0.0"
+
+# Strategy Execution Timing Rules (Relative Offsets in Minutes)
+STRATEGY_WARMUP_MINUTES = 45   # 09:15 + 45m = 10:00 AM on NSE/BSE
+STRATEGY_CUTOFF_MINUTES = 120  # 15:30 - 2h = 1:30 PM on NSE/BSE
 
 
 def evaluate_signals(
@@ -53,17 +58,20 @@ def evaluate_signals(
     # 2. Add Relative Weakness Filter
     df = compute_relative_weakness(df, nifty_pct_map)
 
-    # 3. Time Filter: Configurable Entry Window (Default: 10:00 AM to 1:30 PM IST)
-    time_filter = (
-        (
-            (df.index.hour > config.ENTRY_START_HOUR) | 
-            ((df.index.hour == config.ENTRY_START_HOUR) & (df.index.minute >= config.ENTRY_START_MINUTE))
-        ) & 
-        (
-            (df.index.hour < config.ENTRY_END_HOUR) | 
-            ((df.index.hour == config.ENTRY_END_HOUR) & (df.index.minute <= config.ENTRY_END_MINUTE))
+    # 3. Time Filter: Dynamic Strategy Entry Window via relative offsets
+    market_key = getattr(config, 'EXCHANGE_MARKET', 'NSE')
+    if not is_continuous_market(market_key):
+        entry_start, entry_end = get_strategy_entry_window(
+            market_key=market_key,
+            warmup_minutes=STRATEGY_WARMUP_MINUTES,
+            cutoff_minutes=STRATEGY_CUTOFF_MINUTES
         )
-    )
+        if entry_start is not None and entry_end is not None:
+            time_filter = (df.index.time >= entry_start) & (df.index.time <= entry_end)
+        else:
+            time_filter = pd.Series(True, index=df.index)
+    else:
+        time_filter = pd.Series(True, index=df.index)
 
     # 4. Explicit Strategy Sub-Filter Boolean Flags (for telemetry & diagnostics)
     df['Rel_Weakness_Pass'] = df['Rel_Weakness'].fillna(False)
@@ -139,8 +147,9 @@ def simulate_single_trade(
             curr_sl = entry_p
             trailed = True
 
-        # 4. Check Configurable Square-Off (Default: 3:00 PM)
-        if (t_bar.hour == config.SQUAREOFF_HOUR and t_bar.minute >= config.SQUAREOFF_MINUTE) or (t_bar.hour > config.SQUAREOFF_HOUR):
+        # 4. Check Configurable Square-Off (derived dynamically from market calendar)
+        sq_time = get_squareoff_time(getattr(config, 'EXCHANGE_MARKET', 'NSE'))
+        if sq_time is not None and t_bar.time() >= sq_time:
             exit_t, pnl_pct, result = t_bar, (entry_p - c_val) / entry_p, TradeExitReason.ALGO_SQUAREOFF_DAY_END
             break
 

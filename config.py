@@ -1,61 +1,123 @@
 """
-System-Wide Configuration & Quantitative Parameters.
+Centralized Configuration Module for Algorithmic Trading Framework.
 
-Centralized source of truth across all modules (data pipelines,
-strategies, backtesting simulations, and live execution daemons).
+Defines:
+  - Exchange market session profiles (NSE, BSE, MCX, CDS, US_EQUITY, CRYPTO)
+  - Strategy parameters & relative warmup/cutoff offsets
+  - Dual-Guard risk budgeting & position sizing thresholds
+  - Isolated database paths for Paper vs Live modes
 """
 
 import os
 from dataclasses import dataclass
-# pyrefly: ignore [missing-import]
+from typing import Dict, Any, Tuple
 from dotenv import load_dotenv
 
 load_dotenv()
 
 
+# -------------------------------------------------------------------------
+# Declarative Exchange Market Session Profiles
+# -------------------------------------------------------------------------
+EXCHANGE_PROFILES: Dict[str, Dict[str, Any]] = {
+    "NSE": {
+        "name": "National Stock Exchange of India (Equity)",
+        "timezone": "Asia/Kolkata",
+        "open": (9, 15),
+        "close": (15, 30),
+        "squareoff": (15, 0),
+        "is_continuous": False,
+    },
+    "BSE": {
+        "name": "Bombay Stock Exchange (Equity)",
+        "timezone": "Asia/Kolkata",
+        "open": (9, 15),
+        "close": (15, 30),
+        "squareoff": (15, 0),
+        "is_continuous": False,
+    },
+    "MCX": {
+        "name": "Multi Commodity Exchange of India",
+        "timezone": "Asia/Kolkata",
+        "open": (9, 0),
+        "close": (23, 30),
+        "squareoff": (23, 15),
+        "is_continuous": False,
+    },
+    "CDS": {
+        "name": "NSE/BSE Currency Derivatives",
+        "timezone": "Asia/Kolkata",
+        "open": (9, 0),
+        "close": (17, 0),
+        "squareoff": (16, 45),
+        "is_continuous": False,
+    },
+    "US_EQUITY": {
+        "name": "US Stock Markets (NYSE/NASDAQ)",
+        "timezone": "America/New_York",
+        "open": (9, 30),
+        "close": (16, 0),
+        "squareoff": (15, 45),
+        "is_continuous": False,
+    },
+    "CRYPTO": {
+        "name": "24/7 Cryptocurrency Market",
+        "timezone": "UTC",
+        "open": None,
+        "close": None,
+        "squareoff": None,
+        "is_continuous": True,
+    },
+}
+
+
 @dataclass(frozen=True)
 class TradingConfig:
-    # Active Broker Default (shoonya | zerodha | dhan | groww | angelone | upstox | fyers | zero)
+    # -------------------------------------------------------------------------
+    # Target Market & Environment
+    # -------------------------------------------------------------------------
+    EXCHANGE_MARKET: str = "NSE"
     ACTIVE_BROKER: str = "shoonya"
+    TRADING_MODE: str = "paper"  # 'paper' or 'live'
+    ORDER_TYPE: str = "BO"       # 'BO' or 'MIS'
 
-    # Portfolio Capital & Allocation Defaults
+    # -------------------------------------------------------------------------
+    # Capital & Portfolio Risk Sizing
+    # -------------------------------------------------------------------------
     INITIAL_CAPITAL: float = 10000.0
     MAX_CONCURRENT_POSITIONS: int = 2
     LEVERAGE_MIS: int = 5
+    MAX_RISK_PER_TRADE_PCT: float = 0.01  # 1% fixed capital risk per trade
+    MAX_DAILY_LOSS_PCT: float = 0.04      # 4% max daily portfolio loss circuit breaker
 
+    # -------------------------------------------------------------------------
     # Market Data & Timeframe Settings
+    # -------------------------------------------------------------------------
     TIMEFRAME: str = "15m"
     BACKTEST_PERIOD: str = "60d"
 
-    # Strategy Entry Timing Windows (IST)
-    ENTRY_START_HOUR: int = 10
-    ENTRY_START_MINUTE: int = 0
-    ENTRY_END_HOUR: int = 13
-    ENTRY_END_MINUTE: int = 30
-
-    # Intraday Auto-Squareoff Timing (IST)
-    SQUAREOFF_HOUR: int = 15
-    SQUAREOFF_MINUTE: int = 0
-
-    # Execution Mode Defaults
-    TRADING_MODE: str = "paper"  # Execution sandbox: "paper" (paper_trades.db) | "live" (live_trades.db)
-    ORDER_TYPE: str = "BO"       # Order type: "BO" (Bracket Order with exchange SL) | "MIS" (Margin Intraday Square-off)
-
-    # Notification & Alert Channels: list of enabled mediums (e.g. () for none, ("telegram",), ("telegram", "discord", "email"))
-    ALERT_CHANNELS: tuple = ("telegram",)
-
-    # Active Position Guardian High-Frequency Polling (Seconds)
-    POSITION_MONITOR_INTERVAL_SEC: int = 15  # Poll active positions every 15s for instant SL/TP triggers
-
-    # Risk Management Rules
+    # -------------------------------------------------------------------------
+    # Strategy & Universal Relative Offsets (VWAP-Stochastic RSI Breakdown)
+    # -------------------------------------------------------------------------
+    # Risk Management & Stop Loss Rules
     MIN_SL_BUFFER_PCT: float = 0.0020      # 0.2% min SL buffer above entry
     SWING_SL_BUFFER_PCT: float = 0.0005    # 0.05% anti-wick buffer above swing high
     SWING_HIGH_BARS: int = 3               # 3-bar swing high lookback
     RISK_REWARD_RATIO: float = 2.0         # 1:2 R:R target
-    MAX_DAILY_LOSS_PCT: float = 0.04        # 4% Max Daily Portfolio Loss Circuit Breaker
-    MAX_RISK_PER_TRADE_PCT: float = 0.01    # 1% Max Portfolio Risk Per Trade (Issue #24)
 
-    # Computed Properties
+    # Technical Indicator Parameters
+    ADX_PERIOD: int = 14
+    ADX_THRESHOLD: float = 25.0
+    RSI_PERIOD: int = 14
+    STOCH_PERIOD: int = 14
+    STOCH_K_PERIOD: int = 3
+    STOCH_D_PERIOD: int = 3
+    STOCH_OVERBOUGHT: float = 80.0
+
+    # Alerts & Guardian Polling
+    ALERT_CHANNELS: tuple = ("telegram",)
+    POSITION_MONITOR_INTERVAL_SEC: int = 15
+
     @property
     def per_trade_margin(self) -> float:
         """Cash margin allocated per open position slot."""
@@ -63,9 +125,9 @@ class TradingConfig:
 
     @property
     def per_trade_exposure(self) -> float:
-        """Total purchasing power / exposure per trade using intraday MIS leverage."""
+        """Total purchasing power per slot with broker leverage."""
         return self.per_trade_margin * self.LEVERAGE_MIS
 
 
-# Global Default Singleton Instance
+# Default Global Configuration Instance
 CONFIG = TradingConfig()

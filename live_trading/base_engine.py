@@ -94,6 +94,10 @@ from config import CONFIG, TradingConfig
 from core.capital import get_persisted_paper_capital
 from core.risk import is_daily_loss_limit_reached
 from core.trade_db import get_today_realized_pnl
+from core.market_calendar import (
+    is_market_open, is_market_closed, is_entry_window_active, is_squareoff_time,
+    get_seconds_until_market_open, get_seconds_until_entry_window, get_next_market_session
+)
 from data_pipeline import get_nifty50_symbols
 
 
@@ -201,69 +205,32 @@ class BaseTradingEngine(NorenApi):
             return False
 
     def get_seconds_until_market_open(self, now: Optional[datetime.datetime] = None) -> int:
-        """
-        Calculates exact seconds remaining until 09:15:02 AM IST market open today.
-        """
-        now = now or datetime.datetime.now()
-        open_time = now.replace(hour=9, minute=15, second=2, microsecond=0)
-        delta_sec = int((open_time - now).total_seconds())
-        return max(delta_sec, 2)
+        """Calculates exact seconds remaining until market open today."""
+        return get_seconds_until_market_open(market_key=self.config.EXCHANGE_MARKET, now=now)
 
     def get_seconds_until_entry_window(self, now: Optional[datetime.datetime] = None) -> int:
-        """
-        Calculates exact seconds remaining until 10:00:03 AM IST entry window open today.
-        """
-        now = now or datetime.datetime.now()
-        entry_time = now.replace(
-            hour=self.config.ENTRY_START_HOUR,
-            minute=self.config.ENTRY_START_MINUTE,
-            second=3,
-            microsecond=0
-        )
-        delta_sec = int((entry_time - now).total_seconds())
-        return max(delta_sec, 2)
+        """Calculates exact seconds remaining until strategy entry window open today."""
+        return get_seconds_until_entry_window(market_key=self.config.EXCHANGE_MARKET, now=now)
 
     def get_next_market_session(self, now: Optional[datetime.datetime] = None) -> Tuple[datetime.datetime, int]:
-        """
-        Calculates the next upcoming trading session opening (09:15:00 AM IST on next weekday).
-        Returns tuple of (next_session_datetime, seconds_remaining).
-        """
-        now = now or datetime.datetime.now()
-        candidate = now.replace(hour=9, minute=15, second=0, microsecond=0)
-        if now >= candidate:
-            candidate += datetime.timedelta(days=1)
-        
-        # Skip Saturday (5) and Sunday (6)
-        while candidate.weekday() >= 5:
-            candidate += datetime.timedelta(days=1)
-
-        delta_sec = int((candidate - now).total_seconds())
-        return candidate, max(delta_sec, 5)
+        """Calculates the next upcoming trading session opening."""
+        return get_next_market_session(market_key=self.config.EXCHANGE_MARKET, now=now)
 
     def is_market_open(self, now: Optional[datetime.datetime] = None) -> bool:
-        """Checks if current time is within official NSE trading session (09:15 to 15:30 IST on weekdays)."""
-        now = now or datetime.datetime.now()
-        if now.weekday() >= 5:  # Saturday=5, Sunday=6
-            return False
-        t = now.time()
-        market_open = datetime.time(9, 15)
-        market_close = datetime.time(15, 30)
-        return market_open <= t <= market_close
+        """Checks if current time is within official market session hours."""
+        return is_market_open(market_key=self.config.EXCHANGE_MARKET, now=now)
 
     def is_market_closed(self, now: Optional[datetime.datetime] = None) -> bool:
-        """Checks if today's session has completely concluded (past 15:30 IST or weekend)."""
-        now = now or datetime.datetime.now()
-        if now.weekday() >= 5:
-            return True
-        return now.time() >= datetime.time(15, 30)
+        """Checks if today's market session has concluded."""
+        return is_market_closed(market_key=self.config.EXCHANGE_MARKET, now=now)
 
     def is_entry_window_active(self, now: Optional[datetime.datetime] = None) -> bool:
-        """Checks if current time is within allowed entry window (10:00 AM to 1:30 PM)."""
-        now = now or datetime.datetime.now()
-        t = now.time()
-        start = datetime.time(self.config.ENTRY_START_HOUR, self.config.ENTRY_START_MINUTE)
-        end = datetime.time(self.config.ENTRY_END_HOUR, self.config.ENTRY_END_MINUTE)
-        return start <= t <= end
+        """Checks if current time is within the strategy entry window."""
+        return is_entry_window_active(market_key=self.config.EXCHANGE_MARKET, now=now)
+
+    def is_squareoff_time(self, now: Optional[datetime.datetime] = None) -> bool:
+        """Checks if current time has reached mandatory auto-squareoff threshold."""
+        return is_squareoff_time(market_key=self.config.EXCHANGE_MARKET, now=now)
 
     def render_filter_funnel(
         self,
@@ -289,13 +256,6 @@ class BaseTradingEngine(NorenApi):
         print(f"    • Stochastic RSI Breakdown    : {stoch_count:>2d}/{total_symbols} stocks")
         print(f"    ---------------------------------------------")
         print(f"    ⭐ Qualified Entries Fired    : {signals_fired:>2d} trade(s) | Open Slots: {open_slots}/{max_slots}")
-
-    def is_squareoff_time(self, now: Optional[datetime.datetime] = None) -> bool:
-        """Checks if current time is past mandatory square-off time (3:00 PM)."""
-        now = now or datetime.datetime.now()
-        t = now.time()
-        sq_time = datetime.time(self.config.SQUAREOFF_HOUR, self.config.SQUAREOFF_MINUTE)
-        return t >= sq_time
 
     def get_seconds_until_next_candle(self, interval_mins: int = 15, now: Optional[datetime.datetime] = None) -> int:
         """
