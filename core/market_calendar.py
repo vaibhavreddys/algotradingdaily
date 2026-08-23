@@ -15,6 +15,11 @@ from zoneinfo import ZoneInfo
 from typing import Optional, Tuple, Dict, Any
 from config import EXCHANGE_PROFILES, TradingConfig, CONFIG
 
+# -------------------------------------------------------------------------
+# Platform-Wide Market Timing Constants & Fail-Safes
+# -------------------------------------------------------------------------
+PLATFORM_HARD_CUTOFF_MINUTES_BEFORE_CLOSE: int = 15
+
 
 def get_market_profile(market_key: str = "NSE") -> Dict[str, Any]:
     """Retrieves the declarative dictionary profile for a given market key."""
@@ -69,9 +74,6 @@ def get_strategy_entry_window(
     open_dt = datetime.datetime.combine(dummy_date, open_time) + datetime.timedelta(minutes=warmup_minutes)
     close_dt = datetime.datetime.combine(dummy_date, close_time) - datetime.timedelta(minutes=cutoff_minutes)
     return open_dt.time(), close_dt.time()
-
-
-PLATFORM_HARD_CUTOFF_MINUTES_BEFORE_CLOSE: int = 15
 
 
 def get_platform_hard_squareoff_time(market_key: str = "NSE") -> Optional[datetime.time]:
