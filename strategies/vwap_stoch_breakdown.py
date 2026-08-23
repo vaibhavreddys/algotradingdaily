@@ -207,9 +207,9 @@ def simulate_single_trade(
             curr_sl = new_sl
             trailed = True
 
-        # 4. Check Mandatory Square-Off
-        sq_time = get_squareoff_time(getattr(config, 'EXCHANGE_MARKET', 'NSE'))
-        if sq_time is not None and t_bar.time() >= sq_time:
+        # 4. Check Mandatory Strategy & Platform Fail-Safe Square-Off
+        effective_sq = STRATEGY_INSTANCE.get_effective_squareoff_time(getattr(config, 'EXCHANGE_MARKET', 'NSE'))
+        if effective_sq is not None and t_bar.time() >= effective_sq:
             exit_t, pnl_pct, result = t_bar, (entry_p - c_val) / entry_p, TradeExitReason.ALGO_SQUAREOFF_DAY_END
             break
 

@@ -71,6 +71,26 @@ def get_strategy_entry_window(
     return open_dt.time(), close_dt.time()
 
 
+PLATFORM_HARD_CUTOFF_MINUTES_BEFORE_CLOSE: int = 15
+
+
+def get_platform_hard_squareoff_time(market_key: str = "NSE") -> Optional[datetime.time]:
+    """
+    Calculates the exchange-specific platform-level hard fail-safe cutoff:
+    fail_safe = market_close - 15 minutes.
+    Returns None for 24/7 continuous crypto markets.
+    """
+    if is_continuous_market(market_key):
+        return None
+    _, close_time = get_market_open_close(market_key)
+    if close_time is None:
+        return None
+
+    dummy_date = datetime.date(2026, 1, 1)
+    sq_dt = datetime.datetime.combine(dummy_date, close_time) - datetime.timedelta(minutes=PLATFORM_HARD_CUTOFF_MINUTES_BEFORE_CLOSE)
+    return sq_dt.time()
+
+
 def get_squareoff_time(market_key: str = "NSE") -> Optional[datetime.time]:
     """
     Returns the mandatory intraday auto-squareoff time in exchange local timezone.

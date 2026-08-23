@@ -94,6 +94,7 @@ from .market_calendar import (
     get_market_open_close,
     get_strategy_entry_window,
     get_squareoff_time,
+    get_platform_hard_squareoff_time,
     is_market_open,
     is_market_closed,
     is_entry_window_active,
