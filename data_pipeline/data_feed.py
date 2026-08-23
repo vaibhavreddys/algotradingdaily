@@ -46,14 +46,15 @@ def get_available_symbols(universe: str = "NIFTY50") -> List[str]:
             reader = BacktestDataReader()
             symbols = reader.get_symbols(table="ohlcv_15m")
             if symbols:
+                clean_syms = sorted(list(set(symbols)))
                 if universe.upper() == "NIFTY50":
-                    nifty50_clean = [s.replace(".NS", "").replace("^NSEI", "") for s in get_nifty50_symbols()]
-                    filtered = [s for s in symbols if s in nifty50_clean]
-                    return [f"{s}.NS" for s in filtered] if filtered else [f"{s}.NS" for s in symbols[:50]]
-                return [f"{s}.NS" for s in symbols]
+                    nifty50_clean = set(s.replace(".NS", "").replace("^NSEI", "") for s in get_nifty50_symbols())
+                    filtered = [s for s in clean_syms if s in nifty50_clean]
+                    return sorted([f"{s}.NS" for s in filtered]) if filtered else sorted([f"{s}.NS" for s in clean_syms[:50]])
+                return [f"{s}.NS" for s in clean_syms]
         except Exception:
             pass
-    return get_nifty50_symbols()
+    return sorted(get_nifty50_symbols())
 
 
 def get_nifty50_symbols() -> List[str]:
@@ -206,7 +207,7 @@ def fetch_nifty_benchmark(
                         SELECT 
                             symbol,
                             CAST(timestamp AS DATE) as trade_date,
-                            FIRST(open) as day_open
+                            arg_min(open, timestamp) as day_open
                         FROM {table_name}
                         GROUP BY symbol, CAST(timestamp AS DATE)
                     ),

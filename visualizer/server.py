@@ -117,12 +117,12 @@ def run_backtest_api(payload: dict) -> dict:
             "broker_comparison": []
         }
 
-    # Calculate Core Performance Metrics
+    # Calculate Core Performance Metrics (100% aligned with core/report.py & portfolio_sim.py)
     total_trades = len(tdf)
-    winning_trades = int((tdf['Gross PnL (₹)'] > 0).sum())
+    winning_trades = int((tdf['PnL %'] > 0).sum())
     win_rate = round((winning_trades / total_trades) * 100, 2)
     gross_pnl = float(tdf['Gross PnL (₹)'].sum())
-    net_pnl = float(tdf['Net PnL (₹)'].sum())
+    net_pnl = float(ending_capital - capital)
     net_roi = round((net_pnl / capital) * 100, 2)
     
     gross_wins = tdf.loc[tdf['Gross PnL (₹)'] > 0, 'Gross PnL (₹)'].sum()

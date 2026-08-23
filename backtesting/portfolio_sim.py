@@ -110,7 +110,11 @@ def scan_universe_signals(symbols, nifty_pct_map, config: TradingConfig = CONFIG
     if not all_signals:
         return pd.DataFrame()
 
-    return pd.DataFrame(all_signals).sort_values(by='Entry Time').reset_index(drop=True)
+    df_signals = pd.DataFrame(all_signals)
+    if 'Entry Time' in df_signals.columns:
+        sort_cols = [c for c in ['Entry Time', 'Symbol'] if c in df_signals.columns]
+        df_signals = df_signals.sort_values(by=sort_cols, ascending=[True, True]).reset_index(drop=True)
+    return df_signals
 
 
 def simulate_portfolio_execution(signals_df: pd.DataFrame, config: TradingConfig = CONFIG):
