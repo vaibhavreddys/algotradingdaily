@@ -16,6 +16,9 @@ import yfinance as yf
 import pandas as pd
 from typing import List, Optional, Dict
 
+from data_pipeline.openalgo_ingestion import settings
+from data_pipeline.openalgo_ingestion.reader import BacktestDataReader
+
 if hasattr(sys.stdout, 'reconfigure'):
     try:
         sys.stdout.reconfigure(encoding='utf-8', errors='replace')
@@ -30,6 +33,27 @@ DEFAULT_NIFTY50_FALLBACK = [
     "HDFCBANK.NS", "ICICIBANK.NS", "SBIN.NS", "BHARTIARTL.NS", "ITC.NS",
     "TCS.NS", "LT.NS", "AXISBANK.NS", "KOTAKBANK.NS", "HINDUNILVR.NS"
 ]
+
+
+def get_available_symbols(universe: str = "NIFTY50") -> List[str]:
+    """
+    Returns symbols for backtesting:
+      - If DuckDB exists, queries distinct symbols from database.
+      - Otherwise falls back to live/cached NIFTY 50 list.
+    """
+    if os.path.exists(settings.DB_PATH):
+        try:
+            reader = BacktestDataReader()
+            symbols = reader.get_symbols(table="ohlcv_15m")
+            if symbols:
+                if universe.upper() == "NIFTY50":
+                    nifty50_clean = [s.replace(".NS", "").replace("^NSEI", "") for s in get_nifty50_symbols()]
+                    filtered = [s for s in symbols if s in nifty50_clean]
+                    return [f"{s}.NS" for s in filtered] if filtered else [f"{s}.NS" for s in symbols[:50]]
+                return [f"{s}.NS" for s in symbols]
+        except Exception:
+            pass
+    return get_nifty50_symbols()
 
 
 def get_nifty50_symbols() -> List[str]:
@@ -102,12 +126,32 @@ def load_candle_data(
     verbose: bool = True,
 ) -> Optional[pd.DataFrame]:
     """
-    Smart candle loader with local archiving:
-      1. If a fresh local archive exists (market_data/{SYMBOL}_{interval}.csv),
-         loads instantly from disk.
-      2. Otherwise downloads {period} {interval} candles via yfinance,
-         archives them to market_data/ and returns the DataFrame.
+    Smart candle loader with multi-tier source resolution:
+      1. DuckDB High-Speed Gateway (market_data/openalgo/backtest_data.duckdb):
+         Queries multi-month 1m/5m/15m/1h/1d candles instantly with zero network delay.
+      2. Local CSV Archive (market_data/{SYMBOL}_{interval}.csv) if fresh.
+      3. yfinance Live Network Download with automatic local archiving.
     """
+    clean_sym = symbol.replace(".NS", "").replace("^NSEI", "NIFTY50")
+
+    # Tier 1: DuckDB Gateway
+    if os.path.exists(settings.DB_PATH) and not force_refresh:
+        try:
+            table_name = f"ohlcv_{interval}"
+            reader = BacktestDataReader()
+            raw_df = reader.get_full_dataframe(symbol=clean_sym, table=table_name)
+            if raw_df is not None and not raw_df.empty and len(raw_df) >= 50:
+                df = raw_df.copy()
+                if "symbol" in df.columns:
+                    df = df.drop(columns=["symbol"])
+                df.columns = [c.capitalize() for c in df.columns]
+                if verbose:
+                    print(f"  🦆 {symbol}: loaded from DuckDB ({table_name} | {len(df)} candles)")
+                return df
+        except Exception:
+            pass
+
+    # Tier 2: Local CSV Archive
     cache_path = _archive_path(symbol, interval)
 
     if not force_refresh and os.path.exists(cache_path):

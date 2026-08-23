@@ -37,7 +37,12 @@ class TestOpenAlgoIngestion(unittest.TestCase):
 
     def tearDown(self):
         self.settings_patch.stop()
-        self.temp_dir.cleanup()
+        import gc
+        gc.collect()
+        try:
+            self.temp_dir.cleanup()
+        except Exception:
+            pass
 
     def _engine(self, response):
         class Client:

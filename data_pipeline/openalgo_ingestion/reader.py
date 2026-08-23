@@ -133,6 +133,15 @@ class BacktestDataReader:
         frame = frame.rename_axis(columns="symbol")
         return frame
 
+    def get_symbols(self, table: str = "ohlcv_15m") -> list[str]:
+        """Return list of distinct symbols present in the given table."""
+        if table not in ALLOWED_TABLES:
+            raise ValueError(f"Unknown table: {table}. Allowed: {sorted(ALLOWED_TABLES)}")
+        duckdb = self._duck()
+        with self._connect(duckdb) as conn:
+            rows = conn.execute(f"SELECT DISTINCT symbol FROM {table} ORDER BY symbol").fetchall()
+            return [r[0] for r in rows]
+
     def get_stats(self) -> dict:
         duckdb = self._duck()
         con = self._connect(duckdb)
