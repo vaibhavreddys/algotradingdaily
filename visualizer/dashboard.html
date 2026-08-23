@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OpenAlgo | Quantitative Command Center</title>
+<style>
+  :root {
+    --bg: #0e121b; --panel: #161b26; --panel2: #1f2636;
+    --text: #e2e5eb; --muted: #7c8394; --accent: #2962ff; --accent-hover: #3d75ff;
+    --up: #10b981; --border: #283042; --purple: #8b5cf6;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; background: var(--bg); color: var(--text); font: 13px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; display: flex; flex-direction: column; overflow-x: hidden; }
+
+  /* Navigation Header */
+  .top-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0 20px; height: 52px; background: #131722; border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  .brand { font-weight: 800; font-size: 16px; letter-spacing: .3px; display: flex; align-items: center; gap: 8px; }
+  .brand span { color: var(--accent); }
+  .nav-tabs { display: flex; gap: 8px; }
+  .nav-tab {
+    padding: 7px 16px; font-weight: 600; color: var(--muted); cursor: pointer; border-radius: 6px; transition: .15s; font-size: 13px; text-decoration: none; display: flex; align-items: center;
+  }
+  .nav-tab:hover { color: var(--text); background: var(--panel2); }
+  .nav-tab.active { color: #fff; background: var(--accent); }
+  .status-pill { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--up); font-weight: 600; background: rgba(16,185,129,0.12); padding: 4px 12px; border-radius: 14px; border: 1px solid rgba(16,185,129,0.25); }
+  .status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--up); box-shadow: 0 0 8px var(--up); }
+
+  /* Main Container */
+  .main-wrap { flex: 1; overflow-y: auto; padding: 28px 24px; max-width: 1400px; margin: 0 auto; width: 100%; display: flex; flex-direction: column; gap: 24px; }
+  
+  /* Hero Banner */
+  .hero-box {
+    background: linear-gradient(135deg, #1b2336 0%, #131724 100%);
+    border: 1px solid var(--border); border-radius: 12px; padding: 28px 32px;
+    display: flex; justify-content: space-between; align-items: center;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.35);
+  }
+  .hero-text h1 { margin: 0 0 8px 0; font-size: 24px; font-weight: 800; color: #fff; letter-spacing: -.3px; }
+  .hero-text p { margin: 0; color: var(--muted); font-size: 13.5px; max-width: 700px; line-height: 1.5; }
+  
+  /* Action Cards Grid */
+  .section-title { font-size: 14px; font-weight: 800; color: #fff; text-transform: uppercase; letter-spacing: .6px; margin-bottom: 14px; display: flex; align-items: center; gap: 8px; }
+  .action-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); gap: 18px; }
+  .action-card {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 24px;
+    display: flex; flex-direction: column; justify-content: space-between; transition: transform .15s, border-color .15s;
+    text-decoration: none; color: inherit; box-shadow: 0 4px 20px rgba(0,0,0,0.25);
+  }
+  .action-card:hover { transform: translateY(-3px); border-color: var(--accent); }
+  .action-card.chart-card:hover { border-color: var(--purple); }
+  .action-icon { font-size: 28px; margin-bottom: 12px; }
+  .action-heading { font-size: 18px; font-weight: 700; color: #fff; margin-bottom: 6px; }
+  .action-desc { font-size: 13px; color: var(--muted); line-height: 1.5; margin-bottom: 20px; flex: 1; }
+  .action-btn {
+    align-self: flex-start; padding: 8px 18px; border-radius: 7px; font-weight: 700; font-size: 13px;
+    background: var(--accent); color: #fff; display: flex; align-items: center; gap: 6px;
+  }
+  .action-card.chart-card .action-btn { background: var(--purple); }
+
+  /* Telemetry Grid */
+  .telemetry-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; }
+  .telem-card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 18px; }
+  .telem-label { font-size: 11.5px; font-weight: 700; color: var(--muted); text-transform: uppercase; }
+  .telem-val { font-size: 24px; font-weight: 800; color: #fff; margin-top: 6px; }
+  .telem-sub { font-size: 12px; color: var(--muted); margin-top: 4px; }
+</style>
+</head>
+<body>
+
+<div class="top-header">
+  <div class="brand">🚀 Open<span>Algo</span> Studio</div>
+  <div class="nav-tabs">
+    <a href="/" class="nav-tab active">🏠 Overview</a>
+    <a href="/backtest" class="nav-tab">⚡ Strategy Backtester</a>
+    <a href="/chart" class="nav-tab">📊 Candle Visualizer</a>
+  </div>
+  <div class="status-pill">
+    <div class="status-dot"></div>
+    <span>DUCKDB READY (IST)</span>
+  </div>
+</div>
+
+<div class="main-wrap">
+  <!-- Hero Section -->
+  <div class="hero-box">
+    <div class="hero-text">
+      <h1>Quantitative Trading Command Center</h1>
+      <p>Multi-strategy portfolio backtesting lab and market data visualizer powered by 15.48M DuckDB historical bars, multi-broker statutory friction modeling, and modular strategy contracts.</p>
+    </div>
+  </div>
+
+  <!-- Primary Action Cards -->
+  <div>
+    <div class="section-title">🚀 Trading Workspaces</div>
+    <div class="action-grid">
+      <a href="/backtest" class="action-card">
+        <div>
+          <div class="action-icon">⚡</div>
+          <div class="action-heading">Strategy Backtest Lab</div>
+          <div class="action-desc">Simulate multi-stock execution across strategy versions (v1.0, v1.1), configure custom account capital, inspect real-time KPI scorecards, and compare Net Profit across 8 major Indian brokers.</div>
+        </div>
+        <div class="action-btn">Launch Strategy Backtester ➔</div>
+      </a>
+
+      <a href="/chart" class="action-card chart-card">
+        <div>
+          <div class="action-icon">📊</div>
+          <div class="action-heading">Candle & Indicator Visualizer</div>
+          <div class="action-desc">Explore 15.48 Million 1-minute historical bars with interactive TradingView lightweight-charts, session-anchored intraday VWAP, multi-timeframe resolution, SMA/EMA overlays, and CSV export.</div>
+        </div>
+        <div class="action-btn">Launch Candle Visualizer ➔</div>
+      </a>
+    </div>
+  </div>
+
+  <!-- Telemetry Section -->
+  <div>
+    <div class="section-title">📊 System & Dataset Telemetry</div>
+    <div class="telemetry-grid">
+      <div class="telem-card">
+        <div class="telem-label">DuckDB Historical Store 🦆</div>
+        <div class="telem-val" id="dash-candles">15,476,573</div>
+        <div class="telem-sub">1-Minute OHLCV Bars (Oct 2025 – Aug 2026)</div>
+      </div>
+      <div class="telem-card">
+        <div class="telem-label">Universe Coverage 📈</div>
+        <div class="telem-val" id="dash-symbols">200 Symbols</div>
+        <div class="telem-sub">NIFTY 50 + NIFTY Next 50 + Midcaps</div>
+      </div>
+      <div class="telem-card">
+        <div class="telem-label">Active Production Strategy 🎯</div>
+        <div class="telem-val" style="font-size:18px;">VWAP-Stoch Breakdown</div>
+        <div class="telem-sub">Version: <b style="color:var(--accent);">v1.0.0 (Stable)</b> | 15m Timeframe</div>
+      </div>
+      <div class="telem-card">
+        <div class="telem-label">Database Storage Size 💾</div>
+        <div class="telem-val" id="dash-dbsize">1,262 MB</div>
+        <div class="telem-sub">Embedded Columnar Database</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+async function loadSystemStats() {
+  try {
+    const res = await fetch('/api/system/stats');
+    const data = await res.json();
+    document.getElementById('dash-candles').innerText = data.total_candles.toLocaleString();
+    document.getElementById('dash-symbols').innerText = data.total_symbols + ' Symbols';
+    document.getElementById('dash-dbsize').innerText = data.db_size_mb + ' MB';
+  } catch (e) {}
+}
+
+window.onload = loadSystemStats;
+</script>
+</body>
+</html>

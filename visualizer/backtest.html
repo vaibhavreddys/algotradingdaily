@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OpenAlgo | Quantitative Backtest Studio</title>
+<style>
+  :root {
+    --bg: #131722; --panel: #1b1f2b; --panel2: #262b38;
+    --text: #d1d4dc; --muted: #787b86; --accent: #2962ff; --accent-hover: #3d75ff;
+    --up: #26a69a; --down: #ef5350; --border: #333846;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; background: var(--bg); color: var(--text); font: 13px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; display: flex; flex-direction: column; overflow-x: hidden; }
+
+  /* Top Navigation Bar */
+  .top-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0 16px; height: 48px; background: #181c27; border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  .brand { font-weight: 800; font-size: 15px; letter-spacing: .3px; display: flex; align-items: center; gap: 8px; }
+  .brand span { color: var(--accent); }
+  .nav-tabs { display: flex; gap: 6px; }
+  .nav-tab {
+    padding: 6px 14px; font-weight: 600; color: var(--muted); cursor: pointer; border-radius: 6px; transition: .15s; font-size: 12.5px; text-decoration: none; display: flex; align-items: center;
+  }
+  .nav-tab:hover { color: var(--text); background: var(--panel2); }
+  .nav-tab.active { color: #fff; background: var(--accent); }
+  .status-pill { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--up); font-weight: 600; background: rgba(38,166,154,0.12); padding: 4px 10px; border-radius: 12px; border: 1px solid rgba(38,166,154,0.25); }
+  .status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--up); box-shadow: 0 0 8px var(--up); }
+
+  /* Content */
+  .content-wrap { flex: 1; overflow-y: auto; display: flex; flex-direction: column; }
+  .dash-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; padding: 18px 20px 0 20px; max-width: 1400px; margin: 0 auto; width: 100%; }
+  .dash-card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 14px 18px; }
+  .dash-title { font-size: 11px; font-weight: 700; color: var(--muted); text-transform: uppercase; }
+  .dash-val { font-size: 22px; font-weight: 800; color: #fff; margin-top: 4px; }
+  .dash-sub { font-size: 11.5px; color: var(--muted); margin-top: 2px; }
+
+  .backtest-ctrls {
+    display: flex; flex-wrap: wrap; gap: 12px; align-items: center; padding: 14px 20px;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 8px; margin: 18px 20px 0 20px;
+    max-width: 1400px; margin-left: auto; margin-right: auto; width: calc(100% - 40px);
+  }
+  .ctrl-group { display: flex; flex-direction: column; gap: 4px; }
+  .ctrl-label { font-size: 11px; font-weight: 700; color: var(--muted); text-transform: uppercase; }
+  input, select, button {
+    background: var(--panel2); color: var(--text); border: 1px solid var(--border);
+    border-radius: 7px; padding: 6px 10px; font-size: 13px; outline: none; transition: .15s;
+  }
+  input:focus, select:focus { border-color: var(--accent); }
+  button.primary-btn {
+    background: var(--accent); border-color: var(--accent); color: #fff;
+    font-weight: 700; padding: 7px 20px; border-radius: 7px; cursor: pointer; align-self: flex-end;
+  }
+  button.primary-btn:hover { filter: brightness(1.15); }
+  button.primary-btn:disabled { opacity: 0.5; cursor: wait; }
+
+  .bt-results { padding: 18px 20px 30px 20px; display: flex; flex-direction: column; gap: 18px; max-width: 1400px; margin: 0 auto; width: 100%; }
+  .kpi-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 14px; }
+  .kpi-card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 14px; text-align: center; }
+  .kpi-title { font-size: 11.5px; font-weight: 600; color: var(--muted); }
+  .kpi-val { font-size: 20px; font-weight: 800; margin-top: 4px; }
+  .kpi-val.pos { color: var(--up); }
+  .kpi-val.neg { color: var(--down); }
+
+  .table-box { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 16px; overflow-x: auto; }
+  .table-box h3 { margin: 0 0 12px 0; font-size: 14px; font-weight: 700; color: #fff; }
+  table { width: 100%; border-collapse: collapse; text-align: left; font-size: 12.5px; }
+  th { padding: 8px 12px; border-bottom: 1px solid var(--border); color: var(--muted); font-weight: 600; }
+  td { padding: 8px 12px; border-bottom: 1px solid rgba(255,255,255,0.04); }
+  tr:hover td { background: var(--panel2); }
+  .badge-res { padding: 2px 7px; border-radius: 4px; font-size: 11px; font-weight: 700; }
+  .badge-win { background: rgba(38,166,154,0.15); color: var(--up); }
+  .badge-loss { background: rgba(239,83,80,0.15); color: var(--down); }
+</style>
+</head>
+<body>
+
+<div class="top-header">
+  <div class="brand">🚀 Open<span>Algo</span> Studio</div>
+  <div class="nav-tabs">
+    <a href="/" class="nav-tab">🏠 Overview</a>
+    <a href="/backtest" class="nav-tab active">⚡ Strategy Backtester</a>
+    <a href="/chart" class="nav-tab">📊 Candle Visualizer</a>
+  </div>
+  <div class="status-pill">
+    <div class="status-dot"></div>
+    <span>DUCKDB READY (IST)</span>
+  </div>
+</div>
+
+<div class="content-wrap">
+  <!-- System Telemetry Grid -->
+  <div class="dash-grid">
+    <div class="dash-card">
+      <div class="dash-title">DuckDB Historical Store <span>🦆</span></div>
+      <div class="dash-val" id="dash-candles">15,476,573</div>
+      <div class="dash-sub">1-Minute OHLCV Bars (Oct 2025 – Aug 2026)</div>
+    </div>
+    <div class="dash-card">
+      <div class="dash-title">Stock Universe Coverage <span>📈</span></div>
+      <div class="dash-val" id="dash-symbols">200 Symbols</div>
+      <div class="dash-sub">NIFTY 50 + NIFTY Next 50 + Midcaps</div>
+    </div>
+    <div class="dash-card">
+      <div class="dash-title">Active Production Strategy <span>🎯</span></div>
+      <div class="dash-val" style="font-size:18px;">VWAP-Stoch Breakdown</div>
+      <div class="dash-sub">Version: <b style="color:var(--accent);">v1.0.0 (Stable)</b> | 15m Timeframe</div>
+    </div>
+    <div class="dash-card">
+      <div class="dash-title">Database Storage Size <span>💾</span></div>
+      <div class="dash-val" id="dash-dbsize">1,262 MB</div>
+      <div class="dash-sub">Embedded Columnar Database</div>
+    </div>
+  </div>
+
+  <!-- Backtest Controls -->
+  <div class="backtest-ctrls">
+    <div class="ctrl-group">
+      <div class="ctrl-label">Strategy</div>
+      <select id="bt-strat" onchange="onStrategyChange()"></select>
+    </div>
+    <div class="ctrl-group">
+      <div class="ctrl-label">Version</div>
+      <select id="bt-version"></select>
+    </div>
+    <div class="ctrl-group">
+      <div class="ctrl-label">Universe</div>
+      <select id="bt-universe">
+        <option value="NIFTY50" selected>NIFTY 50 (50 Large-Caps)</option>
+        <option value="ALL">NIFTY 200 (Full DuckDB Store)</option>
+      </select>
+    </div>
+    <div class="ctrl-group">
+      <div class="ctrl-label">Capital (₹)</div>
+      <input type="number" id="bt-capital" value="10000" style="width:110px;">
+    </div>
+    <button class="primary-btn" id="bt-run-btn" onclick="runBacktest()">▶️ Run Simulation</button>
+  </div>
+
+  <!-- Results Dashboard -->
+  <div class="bt-results">
+    <div class="kpi-row">
+      <div class="kpi-card">
+        <div class="kpi-title">TOTAL TRADES</div>
+        <div class="kpi-val" id="kpi-trades">-</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-title">WIN RATE</div>
+        <div class="kpi-val pos" id="kpi-winrate">-</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-title">PROFIT FACTOR</div>
+        <div class="kpi-val" id="kpi-pf">-</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-title">GROSS PROFIT</div>
+        <div class="kpi-val pos" id="kpi-gross">-</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-title">TAXES & FEES</div>
+        <div class="kpi-val neg" id="kpi-fees">-</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-title">NET ROI (SHOONYA)</div>
+        <div class="kpi-val neg" id="kpi-net">-</div>
+      </div>
+    </div>
+
+    <div class="table-box">
+      <h3>🏛️ Multi-Broker Net Profit Comparison Matrix</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>Broker Schedule</th>
+            <th>Total Taxes & Fees</th>
+            <th>Net Realized PnL (₹)</th>
+            <th>Net ROI %</th>
+          </tr>
+        </thead>
+        <tbody id="bt-broker-rows"></tbody>
+      </table>
+    </div>
+
+    <div class="table-box">
+      <h3>📜 Recent Executed Trade Log (Last 50 Fills)</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>Symbol</th>
+            <th>Entry Time (IST)</th>
+            <th>Exit Time (IST)</th>
+            <th>Result</th>
+            <th>PnL %</th>
+            <th>Gross PnL</th>
+            <th>Net Realized PnL</th>
+            <th>Ending Balance</th>
+          </tr>
+        </thead>
+        <tbody id="bt-trade-rows"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script>
+let strategiesList = [];
+
+function safeFmt(val) {
+  if (val === null || val === undefined || isNaN(val)) return '0.00';
+  return Number(val).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+async function loadSystemStats() {
+  try {
+    const res = await fetch('/api/system/stats');
+    const data = await res.json();
+    if (data.total_candles) document.getElementById('dash-candles').innerText = Number(data.total_candles).toLocaleString('en-IN');
+    if (data.total_symbols) document.getElementById('dash-symbols').innerText = data.total_symbols + ' Symbols';
+    if (data.db_size_mb) document.getElementById('dash-dbsize').innerText = data.db_size_mb + ' MB';
+  } catch (e) {}
+}
+
+async function loadStrategies() {
+  try {
+    const res = await fetch('/api/strategies');
+    const data = await res.json();
+    strategiesList = data.strategies || [];
+    const stratSel = document.getElementById('bt-strat');
+    stratSel.innerHTML = '';
+    strategiesList.forEach(s => {
+      const opt = document.createElement('option');
+      opt.value = s.id;
+      opt.innerText = s.name;
+      stratSel.appendChild(opt);
+    });
+    onStrategyChange();
+  } catch (e) {}
+}
+
+function onStrategyChange() {
+  const stratId = document.getElementById('bt-strat').value;
+  const strat = strategiesList.find(s => s.id === stratId);
+  const vSel = document.getElementById('bt-version');
+  vSel.innerHTML = '';
+  if (strat && strat.versions) {
+    strat.versions.forEach(v => {
+      const opt = document.createElement('option');
+      opt.value = v.module;
+      opt.innerText = `v${v.version} (${v.timeframe})`;
+      if (v.is_default) opt.selected = true;
+      vSel.appendChild(opt);
+    });
+  }
+}
+
+async function runBacktest() {
+  const btn = document.getElementById('bt-run-btn');
+  btn.disabled = true;
+  btn.innerText = '⏳ Simulating...';
+
+  const payload = {
+    strategy_id: document.getElementById('bt-strat').value,
+    version: document.getElementById('bt-version').value,
+    universe: document.getElementById('bt-universe').value,
+    capital: document.getElementById('bt-capital').value
+  };
+
+  try {
+    const res = await fetch('/api/backtest/run', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const d = await res.json();
+    
+    document.getElementById('kpi-trades').innerText = d.trades_count || 0;
+    document.getElementById('kpi-winrate').innerText = (d.win_rate_pct || 0) + '%';
+    document.getElementById('kpi-pf').innerText = d.profit_factor || '0.00';
+    document.getElementById('kpi-gross').innerText = ((d.gross_pnl || 0) >= 0 ? '+' : '') + '₹' + safeFmt(d.gross_pnl);
+    document.getElementById('kpi-fees').innerText = '₹' + safeFmt(d.total_taxes_fees);
+    document.getElementById('kpi-net').innerText = ((d.net_roi_pct || 0) >= 0 ? '+' : '') + (d.net_roi_pct || 0) + '%';
+    document.getElementById('kpi-net').className = 'kpi-val ' + ((d.net_roi_pct || 0) >= 0 ? 'pos' : 'neg');
+
+    const bTbody = document.getElementById('bt-broker-rows');
+    bTbody.innerHTML = '';
+    (d.broker_comparison || []).forEach(b => {
+      const tr = document.createElement('tr');
+      const isWin = (b.net_pnl || 0) >= 0;
+      tr.innerHTML = `<td>${b.broker}</td><td>₹${safeFmt(b.total_fees)}</td><td style="color:${isWin?'var(--up)':'var(--down)'};font-weight:700;">${isWin?'+':''}₹${safeFmt(b.net_pnl)}</td><td style="color:${isWin?'var(--up)':'var(--down)'};font-weight:700;">${isWin?'+':''}${b.roi_pct}%</td>`;
+      bTbody.appendChild(tr);
+    });
+
+    const tTbody = document.getElementById('bt-trade-rows');
+    tTbody.innerHTML = '';
+    (d.trades || []).slice(-50).reverse().forEach(t => {
+      const tr = document.createElement('tr');
+      const isWin = (t.net_pnl || 0) > 0;
+      tr.innerHTML = `<td><b>${t.symbol}</b></td><td>${(t.entry_time || '').slice(0,16)}</td><td>${(t.exit_time || '').slice(0,16)}</td><td><span class="badge-res ${isWin?'badge-win':'badge-loss'}">${t.result}</span></td><td style="color:${(t.pnl_pct||0)>=0?'var(--up)':'var(--down)'};">${(t.pnl_pct||0)>0?'+':''}${t.pnl_pct}%</td><td>₹${safeFmt(t.gross_pnl)}</td><td style="color:${isWin?'var(--up)':'var(--down)'};font-weight:700;">${isWin?'+':''}₹${safeFmt(t.net_pnl)}</td><td>₹${safeFmt(t.ending_capital)}</td>`;
+      tTbody.appendChild(tr);
+    });
+
+  } catch (e) {
+    alert("Error running simulation: " + e);
+  } finally {
+    btn.disabled = false;
+    btn.innerText = '▶️ Run Simulation';
+  }
+}
+
+window.onload = () => {
+  loadSystemStats();
+  loadStrategies();
+  runBacktest();
+};
+</script>
+</body>
+</html>
