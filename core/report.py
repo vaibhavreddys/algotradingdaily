@@ -163,14 +163,16 @@ def print_multi_broker_matrix(
         b_sim_charges = 0.0
         b_sim_net_pnl = 0.0
 
+        gross_pnl = float(tdf['Gross PnL (₹)'].sum()) if 'Gross PnL (₹)' in tdf.columns else float(tdf['PnL (₹)'].sum())
         for _, row in tdf.iterrows():
-            trade_exp = row['Exposure (₹)'] if 'Exposure (₹)' in row else (config.INITIAL_CAPITAL / config.MAX_CONCURRENT_POSITIONS * config.LEVERAGE_MIS)
+            trade_exp = float(row.get('Exposure (₹)', row.get('Exposure', config.INITIAL_CAPITAL / config.MAX_CONCURRENT_POSITIONS * config.LEVERAGE_MIS)))
+            pnl_val = float(row.get('Gross PnL (₹)', row.get('PnL (₹)', 0.0)))
             s_turnover = trade_exp
-            b_turnover = trade_exp * (1.0 - (row['PnL %'] / 100.0))
+            b_turnover = max(0.0, trade_exp - pnl_val)
             cost = calculate_charges(s_turnover, b_turnover, broker=b_key)
-            raw = trade_exp * (row['PnL %'] / 100.0)
             b_sim_charges += cost
-            b_sim_net_pnl += (raw - cost)
+        
+        b_sim_net_pnl = gross_pnl - b_sim_charges
 
         b_roi = (b_sim_net_pnl / initial_capital) * 100
         sign = "+" if b_sim_net_pnl >= 0 else "-"

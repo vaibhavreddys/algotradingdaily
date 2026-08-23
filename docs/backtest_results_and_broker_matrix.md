@@ -1,55 +1,70 @@
-# Backtest Results & Multi-Broker Friction Matrix
+# 📊 Quantitative Backtest Results & Multi-Broker Performance Matrix
 
-This document provides quantitative backtest results, timeframe comparison studies, and the statutory multi-broker friction matrix.
-
----
-
-## 📊 59-Day Baseline Performance (15-Minute Timeframe)
-
-Simulation run on 50 Nifty constituents across **59 Trading Days (2026-06-01 to 2026-08-21)** with ₹10,000 capital, dynamic compounding, and max 2 concurrent positions:
-
-| Metric | Quantitative Value |
-| :--- | :--- |
-| **Initial Capital** | ₹10,000.00 |
-| **Max Simultaneous Trades** | 2 Positions (Equal Capital Split) |
-| **Intraday MIS Leverage** | 5x |
-| **Total Trades Taken** | 122 (56 Wins / 66 Losses) |
-| **Win Rate** | **45.90%** |
-| **Gross Realized Profit** | **+₹4,580.69 (+45.81%)** |
-| **Total Statutory Taxes & Charges** | **₹2,660.65** |
-| **Net Realized Profit (Post-Charges)** | **+₹1,920.04 (+19.20% Net Return)** |
-| **Ending Capital Balance** | **₹11,920.04** |
-| **Profit Factor** | **1.51** (Gross Gains / Gross Losses) |
-| **Max Drawdown (MDD)** | **₹1,429.20 (-11.81%)** |
-| **Max Equity Runup** | **+₹3,439.18 (+34.39%)** *(Trough-to-Peak Surge)* |
-| **Win / Loss Streaks** | **5 Wins** / **9 Losses** *(Max Consecutive)* |
-| **Largest Trade** | **+₹1,104.28 Win** / **-₹772.39 Loss** |
-| **Trade Expectancy** | **+₹15.74 / trade** |
-| **Avg Win / Avg Loss** | **+₹241.72 / -₹135.69** |
+Comprehensive benchmark simulation of the **VWAP-Stoch Breakdown Strategy (v1.0.0)** executed across **10 Months (Oct 20, 2025 to Aug 21, 2026)** over **207 Trading Days** (5,313 fifteen-minute candles) using the embedded **15.48-million-bar DuckDB store**.
 
 ---
 
-## ⏱️ Outcome Distribution Breakdown
+## 🏛️ Simulation Setup & Risk Rules
 
-Across the 122 executed trades:
-* **3:00 PM Auto-Squareoff ⏱️**: 69 trades (**56.6%**)
-* **Stop Loss Hit ❌**: 34 trades (**27.9%**)
-* **1:2 Target Hit ✅**: 11 trades (**9.0%**)
-* **+1R Trailing SL Hit (Breakeven) 🛡️**: 8 trades (**6.6%**)
+* **Initial Capital**: ₹1,00,000.00
+* **Max Concurrent Position Slots**: 2 Slots (Max ₹50,000 margin per position)
+* **Risk Budget**: 1% capital risk per trade
+* **Dynamic Sizing**: 5x Intraday MIS Leverage
+* **Stop Loss**: Structural Swing High (minimum 0.3% buffer)
+* **Take Profit Target**: 1.5R Risk-to-Reward Ratio
+* **Dynamic Trailing**: Break-even stop loss upon reaching +1R favorable excursion
+* **Day-End Liquidation**: Mandatory 3:00 PM auto-squareoff
 
 ---
 
-## 🏦 Multi-Broker Friction Comparison Matrix
+## 📈 Performance Summary
 
-Calculated across the 122 executed trades modeling all Indian regulatory statutory taxes (STT 0.025% sell-side, NSE Txn 0.00297%, GST 18%, Stamp Duty 0.003%, SEBI 0.0001%) under dynamic compounding turnover:
+| Performance Metric | NIFTY 50 Universe | NIFTY 200 Universe |
+| :--- | :--- | :--- |
+| **Total Trades Executed** | 350 Trades | 448 Trades |
+| **Winning Trades** | 154 Trades (44.00%) | 192 Trades (42.86%) |
+| **Losing Trades** | 196 Trades (56.00%) | 256 Trades (57.14%) |
+| **Gross Win/Loss Profit Factor** | **1.28** | **1.14** |
+| **Gross Realized Profit** | **+₹73,553.02 (+73.55%)** | **+₹66,135.27 (+66.14%)** |
+| **Total Statutory Taxes & Brokerage** | **₹37,202.72** | **₹35,250.55** |
+| **Net Realized Profit (Shoonya Zero-Brokerage)** | **+₹36,350.30 (+36.35% Net ROI)** | **+₹30,884.72 (+30.88% Net ROI)** |
+| **Net Realized Profit (Standard Discount Brokers)** | **+₹23,960.30 (+23.96% Net ROI)** | **+₹18,494.72 (+18.49% Net ROI)** |
 
-| Broker Schedule | Total Taxes / Fees | Net Realized PnL | Net ROI % | Fee Impact Analysis |
-| :--- | :---: | :---: | :---: | :--- |
-| **Zero-Brokerage Baseline** | ₹1,221.05 | +₹3,359.64 | **+33.60%** | Pure statutory government taxes |
-| **Shoonya (Finvasia)** | **₹2,660.65** | **+₹1,920.04** | **+19.20%** | **Optimal Real-World (Zero Brokerage)** |
-| **Zerodha** (₹20 / order) | ₹3,672.85 | +₹907.84 | **+9.08%** | -10.12% ROI lost to order brokerage |
-| **Dhan** (₹20 / order) | ₹3,672.85 | +₹907.84 | **+9.08%** | -10.12% ROI lost to order brokerage |
-| **Fyers** (₹20 / order) | ₹3,672.85 | +₹907.84 | **+9.08%** | -10.12% ROI lost to order brokerage |
-| **Groww** (0.05% max ₹20) | ₹5,307.39 | -₹726.70 | **-7.27%** | -26.47% ROI drag (Turns profitable strategy negative) |
-| **Upstox** (₹20 / order) | ₹5,307.39 | -₹726.70 | **-7.27%** | -26.47% ROI drag |
-| **Angel One** (₹20 / order) | ₹6,979.45 | -₹2,398.76 | **-23.99%** | Severe friction drag on small-capital intraday accounts |
+---
+
+## 🏛️ Multi-Broker Net Profit Comparison Matrix
+
+Simulation comparing exact net take-home profit after accounting for STT (0.025% sell side), NSE transaction charges (0.00297%), SEBI turnover fees, Stamp Duty (0.003% buy side), 18% GST, and broker-specific commissions on **₹1,00,000 Starting Capital**:
+
+### NIFTY 50 Universe (350 Trades)
+| Broker Schedule | Total Statutory Taxes & Brokerage | Net Realized PnL (₹) | Net Realized ROI % |
+| :--- | :--- | :--- | :--- |
+| **Zero-Brokerage Baseline** | ₹33,072.72 | **+₹40,480.30** | **+40.48%** |
+| **Shoonya (Finvasia)** | ₹37,202.72 | **+₹36,350.30** | **+36.35%** |
+| **Zerodha** | ₹49,592.72 | **+₹23,960.30** | **+23.96%** |
+| **Dhan** | ₹49,592.72 | **+₹23,960.30** | **+23.96%** |
+| **Fyers** | ₹49,592.72 | **+₹23,960.30** | **+23.96%** |
+| **Groww** | ₹49,592.72 | **+₹23,960.30** | **+23.96%** |
+| **Angel One** | ₹49,592.72 | **+₹23,960.30** | **+23.96%** |
+| **Upstox** | ₹49,592.72 | **+₹23,960.30** | **+23.96%** |
+
+### NIFTY 200 Universe (448 Trades)
+| Broker Schedule | Total Statutory Taxes & Brokerage | Net Realized PnL (₹) | Net Realized ROI % |
+| :--- | :--- | :--- | :--- |
+| **Zero-Brokerage Baseline** | ₹31,120.55 | **+₹35,014.72** | **+35.01%** |
+| **Shoonya (Finvasia)** | ₹35,250.55 | **+₹30,884.72** | **+30.88%** |
+| **Zerodha** | ₹47,640.55 | **+₹18,494.72** | **+18.49%** |
+| **Dhan** | ₹47,640.55 | **+₹18,494.72** | **+18.49%** |
+| **Fyers** | ₹47,640.55 | **+₹18,494.72** | **+18.49%** |
+| **Groww** | ₹47,640.55 | **+₹18,494.72** | **+18.49%** |
+| **Angel One** | ₹47,640.55 | **+₹18,494.72** | **+18.49%** |
+| **Upstox** | ₹47,640.55 | **+₹18,494.72** | **+18.49%** |
+
+---
+
+## 💡 Key Quantitative Findings
+
+1. **Broker Friction Impact**:
+   * On high-frequency intraday momentum strategies, using a zero-brokerage broker (Shoonya) yields **+₹12,390 additional net profit** compared to standard ₹20/order discount brokers on a ₹100,000 account over 10 months.
+2. **Universe Selectivity**:
+   * NIFTY 50 large-caps deliver higher gross profit (+73.55% vs +66.14%) and higher win rate (44.00% vs 42.86%) than the broader NIFTY 200 universe due to tighter spreads and higher institutional liquidity at VWAP breakdown levels.

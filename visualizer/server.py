@@ -66,7 +66,8 @@ def run_backtest_api(payload: dict) -> dict:
     """Run backtest simulation and return structured KPI and trade log results."""
     strategy_id = payload.get("strategy_id", "vwap_stoch_breakdown")
     version_mod = payload.get("version", "v1_0")
-    universe = payload.get("universe", "NIFTY50")
+    timeframe = payload.get("timeframe", "15m")
+    universe = payload.get("universe", "ALL")
     raw_capital = payload.get("capital", 10000)
     try:
         capital = float(raw_capital)
@@ -80,7 +81,8 @@ def run_backtest_api(payload: dict) -> dict:
         raise ApiError(400, f"Strategy {strategy_id}:{version_mod} not found.")
 
     symbols = get_available_symbols(universe=universe)
-    bench_map = fetch_nifty_benchmark(interval=strategy.TIMEFRAME, universe=universe)
+    selected_tf = timeframe or getattr(strategy, "TIMEFRAME", "15m")
+    bench_map = fetch_nifty_benchmark(interval=selected_tf, universe=universe)
     
     # Custom config instance with requested capital
     custom_cfg = TradingConfig(

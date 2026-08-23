@@ -41,6 +41,7 @@ from strategies.vwap_stoch_breakdown import (
     evaluate_signals,
     simulate_single_trade,
 )
+from strategies.registry import discover_strategies, load_strategy_instance
 
 
 def _scan_single_symbol(ticker, nifty_pct_map, config: TradingConfig, refresh: bool):
@@ -184,24 +185,41 @@ def simulate_portfolio_execution(signals_df: pd.DataFrame, config: TradingConfig
 
 
 def run_portfolio_simulation(
+    strategy_id: str = "vwap_stoch_breakdown",
+    version: str = "v1_0",
+    timeframe: str = "15m",
+    universe: str = "ALL",
+    capital: float = 100000.0,
     config: TradingConfig = CONFIG, 
     refresh: bool = False, 
-    universe: str = "ALL",
     period: str = "60d"
 ):
     """Main orchestrator for the portfolio simulation."""
+    strategy = load_strategy_instance(strategy_id, version)
+    if not strategy:
+        print(f"❌ Error: Strategy '{strategy_id}:{version}' not found.")
+        return
+
+    # Create active config with requested capital
+    active_cfg = TradingConfig(
+        INITIAL_CAPITAL=capital,
+        MAX_CONCURRENT_POSITIONS=config.MAX_CONCURRENT_POSITIONS,
+        MAX_RISK_PER_TRADE_PCT=config.MAX_RISK_PER_TRADE_PCT,
+        MAX_DAILY_LOSS_PCT=config.MAX_DAILY_LOSS_PCT
+    )
+
     symbols = get_available_symbols(universe=universe)
     nifty_pct_map = fetch_nifty_benchmark(
-        period=getattr(config, 'BACKTEST_PERIOD', '60d'),
-        interval=getattr(config, 'TIMEFRAME', TIMEFRAME),
+        period=period,
+        interval=timeframe,
         force_refresh=refresh,
         universe=universe
     )
-    signals_df = scan_universe_signals(symbols, nifty_pct_map, config=config, refresh=refresh)
+    signals_df = scan_universe_signals(symbols, nifty_pct_map, config=active_cfg, refresh=refresh)
 
     tdf, ending_capital, total_charges, _, _ = simulate_portfolio_execution(
         signals_df=signals_df,
-        config=config
+        config=active_cfg
     )
 
     dataset_date_range = None
@@ -217,30 +235,130 @@ def run_portfolio_simulation(
         tdf=tdf,
         ending_capital=ending_capital,
         total_charges=total_charges,
-        config=config,
+        config=active_cfg,
         dataset_date_range=dataset_date_range,
-        strategy_name=STRATEGY_NAME
+        strategy_name=strategy.NAME if strategy else STRATEGY_NAME
     )
     print_multi_broker_matrix(
         tdf=tdf,
-        initial_capital=config.INITIAL_CAPITAL,
-        config=config
+        initial_capital=active_cfg.INITIAL_CAPITAL,
+        config=active_cfg
     )
+
+
+def run_interactive_wizard() -> dict:
+    """Interactive CLI prompt guiding the user through simulation options."""
+    print("\n" + "=" * 70)
+    print("🚀 AlgoTradingDaily | Portfolio Simulation Wizard")
+    print("=" * 70 + "\n")
+
+    strategies = discover_strategies()
+    if not strategies:
+        print("❌ No strategies found in strategies/ directory.")
+        sys.exit(1)
+
+    # 1. Select Strategy
+    print("[1/5] Select Strategy:")
+    for i, s in enumerate(strategies, 1):
+        print(f"  {i}) {s['name']} ({s['id']})")
+    choice = input(f"Enter choice [1-{len(strategies)}] (default: 1): ").strip()
+    strat_idx = int(choice) - 1 if choice.isdigit() and 1 <= int(choice) <= len(strategies) else 0
+    selected_strat = strategies[strat_idx]
+
+    # 2. Select Version
+    versions = selected_strat.get("versions", [])
+    print(f"\n[2/5] Select Version for {selected_strat['name']}:")
+    for i, v in enumerate(versions, 1):
+        def_tag = " [default]" if v.get("is_default") else ""
+        print(f"  {i}) v{v['version']} ({v['module']}){def_tag}")
+    choice = input(f"Enter choice [1-{len(versions)}] (default: 1): ").strip()
+    v_idx = int(choice) - 1 if choice.isdigit() and 1 <= int(choice) <= len(versions) else 0
+    selected_version = versions[v_idx]["module"] if versions else "v1_0"
+
+    # 3. Select Timeframe
+    timeframes = [("15m", "15 minutes (default)"), ("5m", "5 minutes"), ("1m", "1 minute"), ("1h", "1 hour"), ("1d", "1 day")]
+    print("\n[3/5] Select Candle Timeframe:")
+    for i, (tf_val, tf_lbl) in enumerate(timeframes, 1):
+        print(f"  {i}) {tf_lbl}")
+    choice = input(f"Enter choice [1-{len(timeframes)}] (default: 1): ").strip()
+    tf_idx = int(choice) - 1 if choice.isdigit() and 1 <= int(choice) <= len(timeframes) else 0
+    selected_tf = timeframes[tf_idx][0]
+
+    # 4. Select Universe
+    universes = [("ALL", "NIFTY 200 (Full DuckDB Store) [default]"), ("NIFTY50", "NIFTY 50 (50 Large-Caps)")]
+    print("\n[4/5] Select Stock Universe:")
+    for i, (u_val, u_lbl) in enumerate(universes, 1):
+        print(f"  {i}) {u_lbl}")
+    choice = input(f"Enter choice [1-{len(universes)}] (default: 1): ").strip()
+    u_idx = int(choice) - 1 if choice.isdigit() and 1 <= int(choice) <= len(universes) else 0
+    selected_universe = universes[u_idx][0]
+
+    # 5. Enter Capital
+    print("\n[5/5] Enter Initial Capital (₹):")
+    cap_str = input("Capital [default: 100000]: ").strip()
+    try:
+        selected_capital = float(cap_str) if cap_str else 100000.0
+        if selected_capital <= 0:
+            selected_capital = 100000.0
+    except ValueError:
+        selected_capital = 100000.0
+
+    print("\n" + "=" * 70)
+    print(f"▶️ Launching: {selected_strat['name']} (v{selected_version}) | {selected_tf} | {selected_universe} | ₹{selected_capital:,.0f}")
+    print("=" * 70 + "\n")
+
+    return {
+        "strategy_id": selected_strat["id"],
+        "version": selected_version,
+        "timeframe": selected_tf,
+        "universe": selected_universe,
+        "capital": selected_capital,
+    }
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Multi-Stock Portfolio Simulation Engine")
     parser.add_argument(
-        "--refresh",
+        "-i", "--interactive",
         action="store_true",
-        help="Force re-download of fresh 15m candles (bypasses local market_data/ archives)"
+        help="Launch guided interactive CLI wizard to select strategy, version, timeframe, universe, and capital"
+    )
+    parser.add_argument(
+        "--strategy",
+        type=str,
+        default="vwap_stoch_breakdown",
+        help="Strategy ID to simulate (default: vwap_stoch_breakdown)"
+    )
+    parser.add_argument(
+        "--version",
+        type=str,
+        default="v1_0",
+        help="Strategy version module (default: v1_0)"
+    )
+    parser.add_argument(
+        "--timeframe",
+        type=str,
+        default="15m",
+        choices=["1m", "5m", "15m", "1h", "1d"],
+        help="Candle timeframe to evaluate (default: 15m)"
     )
     parser.add_argument(
         "--universe",
         type=str,
         default="ALL",
         choices=["ALL", "NIFTY50", "NIFTY200"],
-        help="Stock universe to simulate (default: ALL 200 constituents)"
+        help="Stock universe to simulate (default: ALL / NIFTY200)"
+    )
+    parser.add_argument(
+        "--capital",
+        type=float,
+        default=100000.0,
+        help="Initial trading capital in ₹ (default: 100000.0)"
+    )
+    parser.add_argument(
+        "--refresh",
+        action="store_true",
+        help="Force re-download of fresh candles (bypasses local cache)"
     )
     parser.add_argument(
         "--period",
@@ -249,4 +367,25 @@ if __name__ == "__main__":
         help="Historical lookback period when downloading via Yahoo Finance fallback (default: 60d)"
     )
     args = parser.parse_args()
-    run_portfolio_simulation(refresh=args.refresh, universe=args.universe, period=args.period)
+
+    if args.interactive:
+        wizard_cfg = run_interactive_wizard()
+        run_portfolio_simulation(
+            strategy_id=wizard_cfg["strategy_id"],
+            version=wizard_cfg["version"],
+            timeframe=wizard_cfg["timeframe"],
+            universe=wizard_cfg["universe"],
+            capital=wizard_cfg["capital"],
+            refresh=args.refresh,
+            period=args.period
+        )
+    else:
+        run_portfolio_simulation(
+            strategy_id=args.strategy,
+            version=args.version,
+            timeframe=args.timeframe,
+            universe=args.universe,
+            capital=args.capital,
+            refresh=args.refresh,
+            period=args.period
+        )

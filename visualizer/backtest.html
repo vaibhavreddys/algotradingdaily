@@ -30,47 +30,58 @@
   .status-pill { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--up); font-weight: 600; background: rgba(38,166,154,0.12); padding: 4px 10px; border-radius: 12px; border: 1px solid rgba(38,166,154,0.25); }
   .status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--up); box-shadow: 0 0 8px var(--up); }
 
-  /* Content */
-  .content-wrap { flex: 1; overflow-y: auto; display: flex; flex-direction: column; }
-  .dash-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; padding: 18px 20px 0 20px; max-width: 1400px; margin: 0 auto; width: 100%; }
+    /* Content */
+  .content-wrap { flex: 1; overflow-y: auto; padding: 20px; }
+  .page-container { max-width: 1400px; margin: 0 auto; width: 100%; display: flex; flex-direction: column; gap: 16px; }
+  
+  .dash-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; width: 100%; }
   .dash-card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 14px 18px; }
   .dash-title { font-size: 11px; font-weight: 700; color: var(--muted); text-transform: uppercase; }
   .dash-val { font-size: 22px; font-weight: 800; color: #fff; margin-top: 4px; }
   .dash-sub { font-size: 11.5px; color: var(--muted); margin-top: 2px; }
 
   .backtest-ctrls {
-    display: flex; flex-wrap: wrap; gap: 12px; align-items: center; padding: 14px 20px;
-    background: var(--panel); border: 1px solid var(--border); border-radius: 8px; margin: 18px 20px 0 20px;
-    max-width: 1400px; margin-left: auto; margin-right: auto; width: calc(100% - 40px);
+    display: grid;
+    grid-template-columns: 1.4fr 0.9fr 0.9fr 1.1fr 1fr 1.3fr;
+    gap: 20px;
+    align-items: flex-end;
+    padding: 20px 28px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    width: 100%;
+    box-sizing: border-box;
   }
-  .ctrl-group { display: flex; flex-direction: column; gap: 4px; }
-  .ctrl-label { font-size: 11px; font-weight: 700; color: var(--muted); text-transform: uppercase; }
-  input, select, button {
+  .ctrl-group { display: flex; flex-direction: column; gap: 8px; width: 100%; }
+  .ctrl-label { font-size: 11px; font-weight: 700; color: var(--muted); text-transform: uppercase; text-align: center; width: 100%; letter-spacing: .5px; }
+  .ctrl-group select, .ctrl-group input {
     background: var(--panel2); color: var(--text); border: 1px solid var(--border);
-    border-radius: 7px; padding: 6px 10px; font-size: 13px; outline: none; transition: .15s;
+    border-radius: 7px; padding: 8px 12px; font-size: 13px; outline: none; transition: .15s; width: 100%; box-sizing: border-box; text-align: center; text-align-last: center;
   }
-  input:focus, select:focus { border-color: var(--accent); }
+  .ctrl-group select:focus, .ctrl-group input:focus { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(41,98,255,0.2); }
   button.primary-btn {
-    background: var(--accent); border-color: var(--accent); color: #fff;
-    font-weight: 700; padding: 7px 20px; border-radius: 7px; cursor: pointer; align-self: flex-end;
+    background: var(--accent); border: 1px solid var(--accent); color: #fff;
+    font-weight: 700; padding: 8px 16px; border-radius: 7px; cursor: pointer;
+    font-size: 13.5px; height: 38px; display: flex; align-items: center; justify-content: center; gap: 6px; width: 100%; box-sizing: border-box;
   }
   button.primary-btn:hover { filter: brightness(1.15); }
   button.primary-btn:disabled { opacity: 0.5; cursor: wait; }
+  button.primary-btn:hover { filter: brightness(1.15); }
+  button.primary-btn:disabled { opacity: 0.5; cursor: wait; }
 
-  .bt-results { padding: 18px 20px 30px 20px; display: flex; flex-direction: column; gap: 18px; max-width: 1400px; margin: 0 auto; width: 100%; }
-  .kpi-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 14px; }
+  .kpi-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 14px; width: 100%; }
   .kpi-card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 14px; text-align: center; }
   .kpi-title { font-size: 11.5px; font-weight: 600; color: var(--muted); }
   .kpi-val { font-size: 20px; font-weight: 800; margin-top: 4px; }
   .kpi-val.pos { color: var(--up); }
   .kpi-val.neg { color: var(--down); }
 
-  .table-box { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 16px; overflow-x: auto; }
-  .table-box h3 { margin: 0 0 12px 0; font-size: 14px; font-weight: 700; color: #fff; }
-  table { width: 100%; border-collapse: collapse; text-align: left; font-size: 12.5px; }
-  th { padding: 8px 12px; border-bottom: 1px solid var(--border); color: var(--muted); font-weight: 600; }
-  td { padding: 8px 12px; border-bottom: 1px solid rgba(255,255,255,0.04); }
-  tr:hover td { background: var(--panel2); }
+  .table-box { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 18px 20px; width: 100%; box-sizing: border-box; overflow-x: auto; }
+  .table-box h3 { margin: 0 0 14px 0; font-size: 14px; font-weight: 700; color: #fff; display: flex; align-items: center; gap: 8px; }
+  table.grid-table { width: 100%; border-collapse: collapse; font-size: 12.5px; table-layout: fixed; min-width: 900px; }
+  table.grid-table th { padding: 10px 14px; border-bottom: 1px solid var(--border); color: var(--muted); font-weight: 700; text-transform: uppercase; font-size: 11.5px; letter-spacing: .3px; }
+  table.grid-table td { padding: 10px 14px; border-bottom: 1px solid rgba(255,255,255,0.04); }
+  table.grid-table tr:hover td { background: var(--panel2); }
   .badge-res { padding: 2px 7px; border-radius: 4px; font-size: 11px; font-weight: 700; }
   .badge-win { background: rgba(38,166,154,0.15); color: var(--up); }
   .badge-loss { background: rgba(239,83,80,0.15); color: var(--down); }
@@ -92,56 +103,66 @@
 </div>
 
 <div class="content-wrap">
-  <!-- System Telemetry Grid -->
-  <div class="dash-grid">
-    <div class="dash-card">
-      <div class="dash-title">DuckDB Historical Store <span>🦆</span></div>
-      <div class="dash-val" id="dash-candles">15,476,573</div>
-      <div class="dash-sub">1-Minute OHLCV Bars (Oct 2025 – Aug 2026)</div>
+  <div class="page-container">
+    <!-- System Telemetry Grid -->
+    <div class="dash-grid">
+      <div class="dash-card">
+        <div class="dash-title">DuckDB Historical Store <span>🦆</span></div>
+        <div class="dash-val" id="dash-candles">15,476,573</div>
+        <div class="dash-sub">1-Minute OHLCV Bars (Oct 2025 – Aug 2026)</div>
+      </div>
+      <div class="dash-card">
+        <div class="dash-title">Stock Universe Coverage <span>📈</span></div>
+        <div class="dash-val" id="dash-symbols">200 Symbols</div>
+        <div class="dash-sub">NIFTY 50 + NIFTY Next 50 + Midcaps</div>
+      </div>
+      <div class="dash-card">
+        <div class="dash-title">Active Production Strategy <span>🎯</span></div>
+        <div class="dash-val" style="font-size:18px;">VWAP-Stoch Breakdown</div>
+        <div class="dash-sub">Version: <b style="color:var(--accent);">v1.0.0 (Stable)</b> | 15m Timeframe</div>
+      </div>
+      <div class="dash-card">
+        <div class="dash-title">Database Storage Size <span>💾</span></div>
+        <div class="dash-val" id="dash-dbsize">1,262 MB</div>
+        <div class="dash-sub">Embedded Columnar Database</div>
+      </div>
     </div>
-    <div class="dash-card">
-      <div class="dash-title">Stock Universe Coverage <span>📈</span></div>
-      <div class="dash-val" id="dash-symbols">200 Symbols</div>
-      <div class="dash-sub">NIFTY 50 + NIFTY Next 50 + Midcaps</div>
-    </div>
-    <div class="dash-card">
-      <div class="dash-title">Active Production Strategy <span>🎯</span></div>
-      <div class="dash-val" style="font-size:18px;">VWAP-Stoch Breakdown</div>
-      <div class="dash-sub">Version: <b style="color:var(--accent);">v1.0.0 (Stable)</b> | 15m Timeframe</div>
-    </div>
-    <div class="dash-card">
-      <div class="dash-title">Database Storage Size <span>💾</span></div>
-      <div class="dash-val" id="dash-dbsize">1,262 MB</div>
-      <div class="dash-sub">Embedded Columnar Database</div>
-    </div>
-  </div>
 
-  <!-- Backtest Controls -->
-  <div class="backtest-ctrls">
-    <div class="ctrl-group">
-      <div class="ctrl-label">Strategy</div>
-      <select id="bt-strat" onchange="onStrategyChange()"></select>
+    <!-- Backtest Controls -->
+    <div class="backtest-ctrls">
+      <div class="ctrl-group">
+        <div class="ctrl-label">Strategy</div>
+        <select id="bt-strat" onchange="onStrategyChange()"></select>
+      </div>
+      <div class="ctrl-group">
+        <div class="ctrl-label">Version</div>
+        <select id="bt-version"></select>
+      </div>
+      <div class="ctrl-group">
+        <div class="ctrl-label">Timeframe</div>
+        <select id="bt-timeframe">
+          <option value="15m" selected>15 mins</option>
+          <option value="5m">5 mins</option>
+          <option value="1m">1 min</option>
+          <option value="1h">1 hour</option>
+          <option value="1d">1 day</option>
+        </select>
+      </div>
+      <div class="ctrl-group">
+        <div class="ctrl-label">Universe</div>
+        <select id="bt-universe">
+          <option value="ALL" selected>NIFTY 200</option>
+          <option value="NIFTY50">NIFTY 50</option>
+        </select>
+      </div>
+      <div class="ctrl-group">
+        <div class="ctrl-label">Capital (₹)</div>
+        <input type="number" id="bt-capital" value="100000" step="10000" min="10000" onkeydown="if(event.key==='.'||event.key===','||event.key==='e'||event.key==='E'||event.key==='-'||event.key==='+'){event.preventDefault();}" style="width:110px;">
+      </div>
+      <button class="primary-btn" id="bt-run-btn" onclick="runBacktest()">▶️ Run Simulation</button>
     </div>
-    <div class="ctrl-group">
-      <div class="ctrl-label">Version</div>
-      <select id="bt-version"></select>
-    </div>
-    <div class="ctrl-group">
-      <div class="ctrl-label">Universe</div>
-      <select id="bt-universe">
-        <option value="NIFTY50" selected>NIFTY 50 (50 Large-Caps)</option>
-        <option value="ALL">NIFTY 200 (Full DuckDB Store)</option>
-      </select>
-    </div>
-    <div class="ctrl-group">
-      <div class="ctrl-label">Capital (₹)</div>
-      <input type="number" id="bt-capital" value="10000" step="10000" min="10000" onkeydown="if(event.key==='.'||event.key===','||event.key==='e'||event.key==='E'||event.key==='-'||event.key==='+'){event.preventDefault();}" style="width:110px;">
-    </div>
-    <button class="primary-btn" id="bt-run-btn" onclick="runBacktest()">▶️ Run Simulation</button>
-  </div>
 
-  <!-- Results Dashboard -->
-  <div class="bt-results">
+    <!-- KPI Row -->
     <div class="kpi-row">
       <div class="kpi-card">
         <div class="kpi-title">TOTAL TRADES</div>
@@ -169,34 +190,36 @@
       </div>
     </div>
 
+    <!-- Table 1: Multi-Broker Matrix -->
     <div class="table-box">
       <h3>🏛️ Multi-Broker Net Profit Comparison Matrix</h3>
-      <table>
+      <table class="grid-table">
         <thead>
           <tr>
-            <th>Broker Schedule</th>
-            <th>Total Taxes & Fees</th>
-            <th>Net Realized PnL (₹)</th>
-            <th>Net ROI %</th>
+            <th style="width: 35%;">Broker Schedule</th>
+            <th style="width: 22%; text-align: right;">Total Taxes & Fees</th>
+            <th style="width: 23%; text-align: right;">Net Realized PnL (₹)</th>
+            <th style="width: 20%; text-align: right;">Net ROI %</th>
           </tr>
         </thead>
         <tbody id="bt-broker-rows"></tbody>
       </table>
     </div>
 
+    <!-- Table 2: Trade Log -->
     <div class="table-box">
       <h3>📜 Recent Executed Trade Log (Last 50 Fills)</h3>
-      <table>
+      <table class="grid-table">
         <thead>
           <tr>
-            <th>Symbol</th>
-            <th>Entry Time (IST)</th>
-            <th>Exit Time (IST)</th>
-            <th>Result</th>
-            <th>PnL %</th>
-            <th>Gross PnL</th>
-            <th>Net Realized PnL</th>
-            <th>Ending Balance</th>
+            <th style="width: 14%;">Symbol</th>
+            <th style="width: 17%;">Entry Time (IST)</th>
+            <th style="width: 17%;">Exit Time (IST)</th>
+            <th style="width: 10%; text-align: center;">Result</th>
+            <th style="width: 10%; text-align: right;">PnL %</th>
+            <th style="width: 10%; text-align: right;">Gross PnL</th>
+            <th style="width: 11%; text-align: right;">Net Realized PnL</th>
+            <th style="width: 11%; text-align: right;">Ending Balance</th>
           </tr>
         </thead>
         <tbody id="bt-trade-rows"></tbody>
@@ -249,7 +272,7 @@ function onStrategyChange() {
     strat.versions.forEach(v => {
       const opt = document.createElement('option');
       opt.value = v.module;
-      opt.innerText = `v${v.version} (${v.timeframe})`;
+      opt.innerText = `v${v.version}`;
       if (v.is_default) opt.selected = true;
       vSel.appendChild(opt);
     });
@@ -274,6 +297,7 @@ async function runBacktest() {
   const payload = {
     strategy_id: document.getElementById('bt-strat').value,
     version: document.getElementById('bt-version').value,
+    timeframe: document.getElementById('bt-timeframe').value,
     universe: document.getElementById('bt-universe').value,
     capital: capVal
   };
@@ -299,7 +323,7 @@ async function runBacktest() {
     (d.broker_comparison || []).forEach(b => {
       const tr = document.createElement('tr');
       const isWin = (b.net_pnl || 0) >= 0;
-      tr.innerHTML = `<td>${b.broker}</td><td>₹${safeFmt(b.total_fees)}</td><td style="color:${isWin?'var(--up)':'var(--down)'};font-weight:700;">${isWin?'+':''}₹${safeFmt(b.net_pnl)}</td><td style="color:${isWin?'var(--up)':'var(--down)'};font-weight:700;">${isWin?'+':''}${b.roi_pct}%</td>`;
+      tr.innerHTML = `<td><b>${b.broker}</b></td><td style="text-align:right;">₹${safeFmt(b.total_fees)}</td><td style="text-align:right;color:${isWin?'var(--up)':'var(--down)'};font-weight:700;">${isWin?'+':''}₹${safeFmt(b.net_pnl)}</td><td style="text-align:right;color:${isWin?'var(--up)':'var(--down)'};font-weight:700;">${isWin?'+':''}${b.roi_pct}%</td>`;
       bTbody.appendChild(tr);
     });
 
@@ -308,7 +332,7 @@ async function runBacktest() {
     (d.trades || []).slice(-50).reverse().forEach(t => {
       const tr = document.createElement('tr');
       const isWin = (t.net_pnl || 0) > 0;
-      tr.innerHTML = `<td><b>${t.symbol}</b></td><td>${(t.entry_time || '').slice(0,16)}</td><td>${(t.exit_time || '').slice(0,16)}</td><td><span class="badge-res ${isWin?'badge-win':'badge-loss'}">${t.result}</span></td><td style="color:${(t.pnl_pct||0)>=0?'var(--up)':'var(--down)'};">${(t.pnl_pct||0)>0?'+':''}${t.pnl_pct}%</td><td>₹${safeFmt(t.gross_pnl)}</td><td style="color:${isWin?'var(--up)':'var(--down)'};font-weight:700;">${isWin?'+':''}₹${safeFmt(t.net_pnl)}</td><td>₹${safeFmt(t.ending_capital)}</td>`;
+      tr.innerHTML = `<td><b>${t.symbol}</b></td><td>${(t.entry_time || '').slice(0,16)}</td><td>${(t.exit_time || '').slice(0,16)}</td><td style="text-align:center;"><span class="badge-res ${isWin?'badge-win':'badge-loss'}">${t.result}</span></td><td style="text-align:right;color:${(t.pnl_pct||0)>=0?'var(--up)':'var(--down)'};">${(t.pnl_pct||0)>0?'+':''}${t.pnl_pct}%</td><td style="text-align:right;">₹${safeFmt(t.gross_pnl)}</td><td style="text-align:right;color:${isWin?'var(--up)':'var(--down)'};font-weight:700;">${isWin?'+':''}₹${safeFmt(t.net_pnl)}</td><td style="text-align:right;">₹${safeFmt(t.ending_capital)}</td>`;
       tTbody.appendChild(tr);
     });
 
