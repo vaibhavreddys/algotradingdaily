@@ -97,18 +97,9 @@ class TradingConfig:
 
     # -------------------------------------------------------------------------
     # Alerts & Guardian Polling
+    # -------------------------------------------------------------------------
     ALERT_CHANNELS: tuple = ("telegram",)
     POSITION_MONITOR_INTERVAL_SEC: int = 15
-
-    @property
-    def per_trade_margin(self) -> float:
-        """Cash margin allocated per open position slot."""
-        return self.INITIAL_CAPITAL / self.MAX_CONCURRENT_POSITIONS
-
-    @property
-    def per_trade_exposure(self) -> float:
-        """Total purchasing power per slot with broker leverage."""
-        return self.per_trade_margin * self.LEVERAGE_MIS
 
 
 # Default Global Configuration Instance

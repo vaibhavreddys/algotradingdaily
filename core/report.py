@@ -164,7 +164,7 @@ def print_multi_broker_matrix(
         b_sim_net_pnl = 0.0
 
         for _, row in tdf.iterrows():
-            trade_exp = row['Exposure (₹)'] if 'Exposure (₹)' in row else config.per_trade_exposure
+            trade_exp = row['Exposure (₹)'] if 'Exposure (₹)' in row else (config.INITIAL_CAPITAL / config.MAX_CONCURRENT_POSITIONS * config.LEVERAGE_MIS)
             s_turnover = trade_exp
             b_turnover = trade_exp * (1.0 - (row['PnL %'] / 100.0))
             cost = calculate_charges(s_turnover, b_turnover, broker=b_key)
