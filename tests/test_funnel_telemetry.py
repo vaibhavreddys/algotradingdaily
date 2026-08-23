@@ -13,8 +13,7 @@ class TestFunnelTelemetry(unittest.TestCase):
         self.config = TradingConfig(
             INITIAL_CAPITAL=10000.0,
             MAX_CONCURRENT_POSITIONS=2,
-            TIMEFRAME="15m"
-        )
+            )
         self.engine = BaseTradingEngine(config=self.config)
 
     def test_render_filter_funnel_output(self):

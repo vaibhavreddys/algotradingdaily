@@ -93,27 +93,9 @@ class TradingConfig:
     # -------------------------------------------------------------------------
     # Market Data & Timeframe Settings
     # -------------------------------------------------------------------------
-    TIMEFRAME: str = "15m"
     BACKTEST_PERIOD: str = "60d"
 
     # -------------------------------------------------------------------------
-    # Strategy & Universal Relative Offsets (VWAP-Stochastic RSI Breakdown)
-    # -------------------------------------------------------------------------
-    # Risk Management & Stop Loss Rules
-    MIN_SL_BUFFER_PCT: float = 0.0020      # 0.2% min SL buffer above entry
-    SWING_SL_BUFFER_PCT: float = 0.0005    # 0.05% anti-wick buffer above swing high
-    SWING_HIGH_BARS: int = 3               # 3-bar swing high lookback
-    RISK_REWARD_RATIO: float = 2.0         # 1:2 R:R target
-
-    # Technical Indicator Parameters
-    ADX_PERIOD: int = 14
-    ADX_THRESHOLD: float = 25.0
-    RSI_PERIOD: int = 14
-    STOCH_PERIOD: int = 14
-    STOCH_K_PERIOD: int = 3
-    STOCH_D_PERIOD: int = 3
-    STOCH_OVERBOUGHT: float = 80.0
-
     # Alerts & Guardian Polling
     ALERT_CHANNELS: tuple = ("telegram",)
     POSITION_MONITOR_INTERVAL_SEC: int = 15

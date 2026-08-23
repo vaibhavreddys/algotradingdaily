@@ -36,6 +36,8 @@ from config import CONFIG, TradingConfig
 from data_pipeline import get_nifty50_symbols, fetch_nifty_benchmark, load_candle_data
 from strategies.vwap_stoch_breakdown import (
     STRATEGY_NAME,
+    TIMEFRAME,
+    SWING_HIGH_BARS,
     evaluate_signals,
     simulate_single_trade,
 )
@@ -50,7 +52,7 @@ def _scan_single_symbol(ticker, nifty_pct_map, config: TradingConfig, refresh: b
         raw_df = load_candle_data(
             ticker,
             period=config.BACKTEST_PERIOD,
-            interval=config.TIMEFRAME,
+            interval=getattr(config, 'TIMEFRAME', TIMEFRAME),
             force_refresh=refresh,
             verbose=False,
         )
@@ -62,7 +64,8 @@ def _scan_single_symbol(ticker, nifty_pct_map, config: TradingConfig, refresh: b
             return ticker, []
 
         signal_positions = np.flatnonzero(df['Signal'].to_numpy())
-        signal_indices = signal_positions[signal_positions >= config.SWING_HIGH_BARS].tolist()
+        swing_bars = getattr(config, 'SWING_HIGH_BARS', SWING_HIGH_BARS)
+        signal_indices = signal_positions[signal_positions >= swing_bars].tolist()
 
         trades = []
         for i in signal_indices:
@@ -185,7 +188,7 @@ def run_portfolio_simulation(config: TradingConfig = CONFIG, refresh: bool = Fal
     symbols = get_nifty50_symbols()
     nifty_pct_map = fetch_nifty_benchmark(
         period=config.BACKTEST_PERIOD,
-        interval=config.TIMEFRAME,
+        interval=getattr(config, 'TIMEFRAME', TIMEFRAME),
         force_refresh=refresh
     )
     signals_df = scan_universe_signals(symbols, nifty_pct_map, config=config, refresh=refresh)

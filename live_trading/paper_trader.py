@@ -28,7 +28,7 @@ if hasattr(sys.stdout, 'reconfigure'):
 from config import CONFIG, TradingConfig
 from live_trading.base_engine import BaseTradingEngine, prevent_sleep_context
 from core.capital import calculate_order_quantity, get_persisted_paper_capital
-from strategies.vwap_stoch_breakdown import STRATEGY_NAME, evaluate_signals
+from strategies.vwap_stoch_breakdown import STRATEGY_NAME, TIMEFRAME, SWING_HIGH_BARS, evaluate_signals
 from data_pipeline import (
     get_nifty50_symbols,
     fetch_nifty_benchmark,
@@ -36,7 +36,7 @@ from data_pipeline import (
     fetch_verified_candles,
     fetch_latest_tick_price,
 )
-from core.risk import calculate_stop_and_target
+from strategies.vwap_stoch_breakdown import calculate_stop_and_target
 from core.trade_db import (
     save_active_position,
     update_trailing_sl,
@@ -220,8 +220,8 @@ class PaperTradingEngine(BaseTradingEngine):
     def _evaluate_single_symbol(self, ticker: str, nifty_pct_map: pd.Series) -> Optional[Dict[str, Any]]:
         """Worker function to fetch and evaluate strategy signals for a single symbol in parallel."""
         try:
-            raw_df = fetch_verified_candles(ticker, period="5d", interval=self.config.TIMEFRAME)
-            if raw_df is None or len(raw_df) < (self.config.SWING_HIGH_BARS + 5):
+            raw_df = fetch_verified_candles(ticker, period="5d", interval=getattr(self.config, 'TIMEFRAME', TIMEFRAME))
+            if raw_df is None or len(raw_df) < (getattr(self.config, 'SWING_HIGH_BARS', SWING_HIGH_BARS) + 5):
                 return None
 
             df = evaluate_signals(raw_df, nifty_pct_map, config=self.config)
@@ -231,7 +231,7 @@ class PaperTradingEngine(BaseTradingEngine):
             last_idx = len(df) - 1
             last_row = df.iloc[last_idx]
 
-            swing_high = float(df.iloc[last_idx - self.config.SWING_HIGH_BARS : last_idx]['High'].max()) if last_idx >= self.config.SWING_HIGH_BARS else 0.0
+            swing_high = float(df.iloc[last_idx - getattr(self.config, 'SWING_HIGH_BARS', SWING_HIGH_BARS) : last_idx]['High'].max()) if last_idx >= getattr(self.config, 'SWING_HIGH_BARS', SWING_HIGH_BARS) else 0.0
 
             return {
                 'ticker': ticker,

@@ -13,7 +13,6 @@ from .indicators import (
 )
 
 from .risk import (
-    calculate_stop_and_target,
     calculate_risk_based_quantity,
     should_trail_to_breakeven,
     is_daily_loss_limit_reached,

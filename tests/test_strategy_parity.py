@@ -1,9 +1,5 @@
 """
-Automated Parity Tests for Stop-Loss, Risk, and Take-Profit calculations.
-
-Asserts exact numerical parity between:
-  1. Backtesting Strategy Engine (strategies/vwap_stoch_breakdown.py)
-  2. Live / Paper Trading Daemon (live_trading/paper_trader.py)
+Automated Parity Tests for Strategy Stop-Loss, Risk, and Take-Profit calculations.
 """
 
 import unittest
@@ -13,63 +9,55 @@ import sys
 # Ensure workspace root is in sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from config import CONFIG, TradingConfig
+from strategies.vwap_stoch_breakdown import (
+    STRATEGY_INSTANCE,
+    calculate_stop_and_target,
+    SWING_SL_BUFFER_PCT,
+    MIN_SL_BUFFER_PCT,
+    RISK_REWARD_RATIO
+)
 
 
 class TestStrategyParity(unittest.TestCase):
-    """Verifies that Backtest and Live trading calculate identical SL, Risk, and TP."""
+    """Verifies that Strategy calculates correct SL, Risk, and TP."""
 
     def test_stop_loss_and_target_parity(self):
         """Tests SL, Risk, and TP calculations across diverse market price scenarios."""
-        config = TradingConfig()
-
         test_scenarios = [
-            {"name": "ONGC-EQ Live Case", "entry": 237.12, "swing_high": 238.11},
-            {"name": "INFY-EQ High Price", "entry": 1815.40, "swing_high": 1824.00},
-            {"name": "RELIANCE-EQ Mid Risk", "entry": 2950.00, "swing_high": 2975.50},
-            {"name": "Flat Doji Consolidation (Floor Test)", "entry": 100.00, "swing_high": 100.05},
+            {"entry_p": 285.00, "swing_high": 286.00, "name": "ONGC-EQ Live Case"},
+            {"entry_p": 1650.00, "swing_high": 1665.00, "name": "INFY-EQ High Price"},
+            {"entry_p": 1263.90, "swing_high": 1270.00, "name": "RELIANCE-EQ Mid Risk"},
+            {"entry_p": 100.00, "swing_high": 100.05, "name": "Flat Doji Consolidation (Floor Test)"},
         ]
 
         for sc in test_scenarios:
+            entry_p = sc["entry_p"]
+            swing_high = sc["swing_high"]
+
             with self.subTest(scenario=sc["name"]):
-                entry_p = sc["entry"]
-                swing_high = sc["swing_high"]
+                sl, tp, risk = calculate_stop_and_target(entry_p, swing_high)
 
-                # 1. Backtest Engine formula
-                backtest_sl = max(
-                    swing_high * (1.0 + config.SWING_SL_BUFFER_PCT),
-                    entry_p * (1.0 + config.MIN_SL_BUFFER_PCT)
+                raw_sl = max(
+                    swing_high * (1.0 + SWING_SL_BUFFER_PCT),
+                    entry_p * (1.0 + MIN_SL_BUFFER_PCT)
                 )
-                backtest_risk = backtest_sl - entry_p
-                backtest_tp = entry_p - (config.RISK_REWARD_RATIO * backtest_risk)
+                raw_risk = raw_sl - entry_p
+                raw_tp = entry_p - (RISK_REWARD_RATIO * raw_risk)
+                expected_sl = round(raw_sl, 2)
+                expected_risk = round(raw_risk, 2)
+                expected_tp = round(raw_tp, 2)
 
-                # 2. Live Paper Trader formula
-                live_sl = max(
-                    swing_high * (1.0 + config.SWING_SL_BUFFER_PCT),
-                    entry_p * (1.0 + config.MIN_SL_BUFFER_PCT)
-                )
-                live_risk = live_sl - entry_p
-                live_tp = entry_p - (config.RISK_REWARD_RATIO * live_risk)
+                self.assertEqual(sl, expected_sl)
+                self.assertEqual(risk, expected_risk)
+                self.assertEqual(tp, expected_tp)
 
-                # 3. Assert Exact Numerical Parity
-                self.assertAlmostEqual(backtest_sl, live_sl, places=4)
-                self.assertAlmostEqual(backtest_risk, live_risk, places=4)
-                self.assertAlmostEqual(backtest_tp, live_tp, places=4)
-
-                # Verify Anti-Wick buffer is strictly above exact swing high
-                self.assertGreater(live_sl, swing_high)
-
-    def test_config_buffer_overrides(self):
-        """Verifies custom buffer overrides behave predictably."""
-        custom_cfg = TradingConfig(SWING_SL_BUFFER_PCT=0.0010, MIN_SL_BUFFER_PCT=0.0030)
-        entry_p = 200.0
-        swing_high = 202.0
-
-        sl = max(
-            swing_high * (1.0 + custom_cfg.SWING_SL_BUFFER_PCT),
-            entry_p * (1.0 + custom_cfg.MIN_SL_BUFFER_PCT)
-        )
-        self.assertAlmostEqual(sl, 202.0 * 1.0010, places=4)
+    def test_trailing_stop_calculation(self):
+        # Entry = 100, Risk = 2, Initial SL = 102. +1R target is reached when low <= 98
+        entry = 100.0
+        current_sl = 102.0
+        risk = 2.0
+        self.assertIsNone(STRATEGY_INSTANCE.calculate_trailing_stop(entry, current_sl, 99.0, 100.5, 98.5, risk))
+        self.assertEqual(STRATEGY_INSTANCE.calculate_trailing_stop(entry, current_sl, 98.0, 100.0, 98.0, risk), 100.0)
 
 
 if __name__ == "__main__":
