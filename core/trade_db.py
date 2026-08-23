@@ -86,6 +86,19 @@ def get_db_connection(mode: Optional[str] = None) -> Iterator[sqlite3.Connection
         conn.close()
 
 
+def _migrate_schema(conn: sqlite3.Connection) -> None:
+    """Ensures strategy_name and strategy_version columns exist on legacy database tables."""
+    cursor = conn.cursor()
+    for tbl in ("active_positions", "trade_history"):
+        cursor.execute(f"PRAGMA table_info({tbl})")
+        cols = [info[1] for info in cursor.fetchall()]
+        if "strategy_name" not in cols:
+            cursor.execute(f"ALTER TABLE {tbl} ADD COLUMN strategy_name TEXT NOT NULL DEFAULT 'VWAP-Stoch Breakdown'")
+        if "strategy_version" not in cols:
+            cursor.execute(f"ALTER TABLE {tbl} ADD COLUMN strategy_version TEXT NOT NULL DEFAULT '1.0.0'")
+    conn.commit()
+
+
 def init_db(mode: Optional[str] = None) -> None:
     """
     Initializes the 2-table schema for the specified mode if not already present.
@@ -105,6 +118,8 @@ def init_db(mode: Optional[str] = None) -> None:
                 initial_sl REAL NOT NULL,
                 current_sl REAL NOT NULL,
                 target_price REAL NOT NULL,
+                strategy_name TEXT NOT NULL DEFAULT 'VWAP-Stoch Breakdown',
+                strategy_version TEXT NOT NULL DEFAULT '1.0.0',
                 status TEXT DEFAULT 'ACTIVE',
                 entry_time TEXT NOT NULL
             )
@@ -115,6 +130,8 @@ def init_db(mode: Optional[str] = None) -> None:
             CREATE TABLE IF NOT EXISTS trade_history (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 symbol TEXT NOT NULL,
+                strategy_name TEXT NOT NULL DEFAULT 'VWAP-Stoch Breakdown',
+                strategy_version TEXT NOT NULL DEFAULT '1.0.0',
                 order_type TEXT DEFAULT 'BO',
                 entry_time TEXT NOT NULL,
                 exit_time TEXT NOT NULL,

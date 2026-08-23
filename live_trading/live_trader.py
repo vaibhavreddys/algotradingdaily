@@ -26,6 +26,8 @@ if hasattr(sys.stdout, 'reconfigure'):
 from config import CONFIG, TradingConfig
 from live_trading.base_engine import BaseTradingEngine, prevent_sleep_context
 from core.capital import calculate_order_quantity
+from core.trade_db import save_active_position, close_and_archive_position, TradeExitReason
+from strategies.vwap_stoch_breakdown import STRATEGY_NAME, STRATEGY_VERSION, MIN_SL_BUFFER_PCT
 
 
 class LiveTradingEngine(BaseTradingEngine):
@@ -65,6 +67,20 @@ class LiveTradingEngine(BaseTradingEngine):
                     'risk': risk,
                     'trailed': False
                 }
+                save_active_position(
+                    symbol=symbol,
+                    quantity=qty,
+                    entry_price=current_price,
+                    initial_sl=sl_price,
+                    current_sl=sl_price,
+                    target_price=tp_price,
+                    strategy_name=STRATEGY_NAME,
+                    strategy_version=STRATEGY_VERSION,
+                    order_type='BO',
+                    entry_order_id=norenordno,
+                    sl_order_id=None,
+                    mode='live'
+                )
                 print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] ✅ BO Active: {symbol} (Order ID: {norenordno})")
                 return True
             print(f"⚠️ BO placement rejected for {symbol}: {order_res}")
@@ -95,7 +111,7 @@ class LiveTradingEngine(BaseTradingEngine):
             norenordno = order_res.get('norenordno')
 
             # Linked Stop Loss Buy Order (SL-LMT)
-            sl_buffer_price = sl_price * (1.0 + self.config.MIN_SL_BUFFER_PCT)
+            sl_buffer_price = sl_price * (1.0 + MIN_SL_BUFFER_PCT)
             sl_res = self.place_order(
                 buy_or_sell='B', product_type='I',
                 exchange='NSE', tradingsymbol=symbol,
@@ -118,6 +134,20 @@ class LiveTradingEngine(BaseTradingEngine):
                 'risk': risk,
                 'trailed': False
             }
+            save_active_position(
+                symbol=symbol,
+                quantity=qty,
+                entry_price=current_price,
+                initial_sl=sl_price,
+                current_sl=sl_price,
+                target_price=tp_price,
+                strategy_name=STRATEGY_NAME,
+                strategy_version=STRATEGY_VERSION,
+                order_type='MIS',
+                entry_order_id=norenordno,
+                sl_order_id=sl_order_id,
+                mode='live'
+            )
             print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] ✅ MIS Active: {symbol} (Linked SL ID: {sl_order_id})")
             return True
 

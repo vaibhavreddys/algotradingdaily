@@ -28,7 +28,7 @@ if hasattr(sys.stdout, 'reconfigure'):
 from config import CONFIG, TradingConfig
 from live_trading.base_engine import BaseTradingEngine, prevent_sleep_context
 from core.capital import calculate_order_quantity, get_persisted_paper_capital
-from strategies.vwap_stoch_breakdown import STRATEGY_NAME, TIMEFRAME, SWING_HIGH_BARS, evaluate_signals
+from strategies.vwap_stoch_breakdown import STRATEGY_NAME, STRATEGY_VERSION, TIMEFRAME, SWING_HIGH_BARS, evaluate_signals
 from data_pipeline import (
     get_nifty50_symbols,
     fetch_nifty_benchmark,
