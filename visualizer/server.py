@@ -67,7 +67,13 @@ def run_backtest_api(payload: dict) -> dict:
     strategy_id = payload.get("strategy_id", "vwap_stoch_breakdown")
     version_mod = payload.get("version", "v1_0")
     universe = payload.get("universe", "NIFTY50")
-    capital = float(payload.get("capital", 10000.0))
+    raw_capital = payload.get("capital", 10000)
+    try:
+        capital = float(raw_capital)
+        if capital <= 0:
+            raise ValueError()
+    except Exception:
+        raise ApiError(400, "Capital must be a positive integer greater than 0.")
 
     strategy = load_strategy_instance(strategy_id, version_mod)
     if not strategy:

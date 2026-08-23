@@ -135,7 +135,7 @@
     </div>
     <div class="ctrl-group">
       <div class="ctrl-label">Capital (₹)</div>
-      <input type="number" id="bt-capital" value="10000" step="10000" min="0" style="width:110px;">
+      <input type="number" id="bt-capital" value="10000" step="10000" min="10000" onkeydown="if(event.key==='.'||event.key===','||event.key==='e'||event.key==='E'||event.key==='-'||event.key==='+'){event.preventDefault();}" style="width:110px;">
     </div>
     <button class="primary-btn" id="bt-run-btn" onclick="runBacktest()">▶️ Run Simulation</button>
   </div>
@@ -257,6 +257,16 @@ function onStrategyChange() {
 }
 
 async function runBacktest() {
+  const capitalInput = document.getElementById('bt-capital');
+  const rawVal = capitalInput.value.trim();
+  const capVal = parseInt(rawVal, 10);
+
+  if (!rawVal || isNaN(capVal) || capVal < 1000 || String(rawVal).includes('.')) {
+    alert('⚠️ Invalid Capital: Please enter a whole positive integer of at least ₹1,000 (e.g. ₹10,000). Decimals and zero are not allowed.');
+    capitalInput.focus();
+    return;
+  }
+
   const btn = document.getElementById('bt-run-btn');
   btn.disabled = true;
   btn.innerText = '⏳ Simulating...';
@@ -265,7 +275,7 @@ async function runBacktest() {
     strategy_id: document.getElementById('bt-strat').value,
     version: document.getElementById('bt-version').value,
     universe: document.getElementById('bt-universe').value,
-    capital: document.getElementById('bt-capital').value
+    capital: capVal
   };
 
   try {
