@@ -61,18 +61,19 @@ from data_pipeline import (
 )
 
 try:
-    from NorenRestApiPy.NorenApi import NorenApi
+    from openalgo import api as OpenAlgoClient
 except ImportError:
-    class NorenApi:
+    class OpenAlgoClient:
         def __init__(self, *args, **kwargs): pass
-        def set_session(self, *args, **kwargs): pass
-        def get_limits(self, *args, **kwargs): return None
-        def searchscrip(self, *args, **kwargs): return None
-        def get_quotes(self, *args, **kwargs): return None
-        def get_time_price_series(self, *args, **kwargs): return None
-        def place_order(self, *args, **kwargs): return None
-        def modify_order(self, *args, **kwargs): return None
-        def cancel_order(self, *args, **kwargs): return None
+        def funds(self): return {}
+        def margin(self): return {}
+        def quotes(self, *args, **kwargs): return {}
+        def get_ltp(self, *args, **kwargs): return {}
+        def history(self, *args, **kwargs): return {}
+        def placeorder(self, *args, **kwargs): return {}
+        def modifyorder(self, *args, **kwargs): return {}
+        def cancelorder(self, *args, **kwargs): return {}
+        def positionbook(self, *args, **kwargs): return {}
 
 
 from contextlib import contextmanager
@@ -101,23 +102,13 @@ def prevent_sleep_context():
             pass
 
 
-class BaseTradingEngine(NorenApi):
+class BaseTradingEngine:
     """
     Universal Foundation for Strategy Execution, Risk Control, and Broker Communication.
     """
     def __init__(self, config: TradingConfig = CONFIG, mode: str = "paper"):
-        super().__init__(
-            host='https://api.shoonya.com/NorenWSTScript/',
-            websocket='wss://api.shoonya.com/NorenWSTScript/'
-        )
         self.config = config
         self.mode = mode.lower()
-        self.user = os.getenv("SHOONYA_USER")
-        self.pwd = os.getenv("SHOONYA_PWD")
-        self.api_key = os.getenv("SHOONYA_API_KEY")
-        self.vendor_code = os.getenv("SHOONYA_VENDOR_CODE")
-        self.totp_key = os.getenv("SHOONYA_TOTP_KEY")
-        self.imei = os.getenv("SHOONYA_IMEI", "shoonya_algo_desktop")
 
         self.api = None
         self.authenticated = False
@@ -185,42 +176,25 @@ class BaseTradingEngine(NorenApi):
         return feed
 
     def authenticate(self) -> bool:
-        """Performs automated TOTP authentication with Shoonya or marks virtual ready."""
-        if self.mode == "paper" and not self.user:
-            print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] 🛡️ [PAPER MODE] Virtual execution active (No real broker orders).")
+        """Connects to OpenAlgo Unified Broker Gateway or initializes virtual paper mode."""
+        if self.mode == "paper" and not getattr(self.config, 'OPENALGO_API_KEY', None):
+            print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] 🛡️ [PAPER MODE] Virtual execution active (Zero capital risk).")
             self.authenticated = True
             return True
 
-        if not all([self.user, self.pwd, self.api_key, self.vendor_code, self.totp_key]):
-            print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] ⚠️ Shoonya credentials incomplete in .env. Running in virtual fallback mode.")
-            self.authenticated = True
-            return True
+        host = getattr(self.config, 'OPENALGO_HOST', 'http://127.0.0.1:5000')
+        api_key = getattr(self.config, 'OPENALGO_API_KEY', '') or os.getenv('OPENALGO_API_KEY', '')
 
         try:
-            import pyotp
-            totp = pyotp.TOTP(self.totp_key)
-            current_totp = totp.now()
-
-            ret = self.login(
-                userid=self.user,
-                password=self.pwd,
-                twoFA=current_totp,
-                vendor_code=self.vendor_code,
-                api_secret=self.api_key,
-                imei=self.imei
-            )
-
-            if ret and ret.get('stat') == 'Ok':
-                print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] ✅ Authenticated with Finvasia Shoonya OMS.")
-                self.api = self
-                self.authenticated = True
-                return True
-            else:
-                print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] ❌ Shoonya authentication failed: {ret}")
-                return False
+            client = OpenAlgoClient(api_key=api_key, host=host)
+            self.api = client
+            self.authenticated = True
+            print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] ✅ Connected to OpenAlgo Unified OMS Gateway ({host}).")
+            return True
         except Exception as e:
-            print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] ❌ Exception during Shoonya auth: {e}")
-            return False
+            print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] ⚠️ OpenAlgo connection failed: {e}. Running in local fallback.")
+            self.authenticated = True
+            return True
 
     def get_seconds_until_market_open(self, now: Optional[datetime.datetime] = None) -> int:
         return get_mc_sec_open(getattr(self.config, 'EXCHANGE', 'NSE'), now=now)

@@ -82,6 +82,14 @@ class TradingConfig:
     ORDER_TYPE: str = "BO"       # 'BO' or 'MIS'
 
     # -------------------------------------------------------------------------
+    # OpenAlgo Unified OMS Gateway
+    # -------------------------------------------------------------------------
+    OPENALGO_HOST: str = os.getenv("OPENALGO_HOST", "http://127.0.0.1:5000")
+    OPENALGO_WS_URL: str = os.getenv("OPENALGO_WS_URL", "ws://127.0.0.1:8765")
+    OPENALGO_API_KEY: str = os.getenv("OPENALGO_API_KEY", "")
+
+
+    # -------------------------------------------------------------------------
     # Capital & Portfolio Risk Sizing
     # -------------------------------------------------------------------------
     INITIAL_CAPITAL: float = 10000.0
