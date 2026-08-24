@@ -44,16 +44,15 @@ class TestFunnelTelemetry(unittest.TestCase):
     def test_sub_filter_boolean_flags_present(self):
         import numpy as np
         import datetime
-        dates = pd.date_range(end=datetime.datetime.now(), periods=100, freq='15min')
+        dates = pd.date_range(start='2026-08-20 09:15:00', periods=150, freq='15min')
         nifty = pd.Series(0.01, index=dates)
         df = pd.DataFrame({
-            'timestamp': dates,
-            'Open': np.linspace(100, 90, 100),
-            'High': np.linspace(102, 92, 100),
-            'Low': np.linspace(98, 88, 100),
-            'Close': np.linspace(99, 89, 100),
-            'Volume': [50000.0] * 100
-        })
+            'Open': np.linspace(100, 90, 150),
+            'High': np.linspace(102, 92, 150),
+            'Low': np.linspace(98, 88, 150),
+            'Close': np.linspace(99, 89, 150),
+            'Volume': [50000.0] * 150
+        }, index=dates)
         res = evaluate_signals(df, nifty_pct_map=nifty, config=self.config)
         self.assertIsNotNone(res)
         self.assertIn('Rel_Weakness_Pass', res.columns)
