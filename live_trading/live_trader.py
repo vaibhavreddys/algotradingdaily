@@ -153,24 +153,7 @@ class LiveTradingEngine(BaseTradingEngine):
         notify_trade_entry(symbol=symbol, price=entry_price, sl=sl_price, tp=tp_price, qty=qty, mode="live", config=self.config)
         return True
 
-    def update_position(self, symbol: str, current_ltp: float, high: float, low: float, now: Optional[datetime.datetime] = None) -> Optional[Dict[str, Any]]:
-        """Micro guardian check for live positions (+1R trailing SL to Breakeven & TP/SL sync)."""
-        if symbol not in self.active_positions:
-            return None
 
-        pos = self.active_positions[symbol]
-        entry_p = pos['entry_price']
-        risk = pos['risk']
-
-        # Trail SL to Breakeven when price achieves +1R profit
-        if not pos['trailed'] and low <= (entry_p - risk):
-            self.execute_trailing_sl(symbol, be_price=entry_p)
-
-        # Mandatory 3:00 PM Squareoff
-        if self.is_squareoff_time(now=now):
-            self.execute_squareoff(symbol, exit_price=current_ltp, reason=TradeExitReason.ALGO_SQUAREOFF_DAY_END)
-
-        return None
 
     def execute_trailing_sl(self, symbol: str, be_price: float) -> bool:
         """Modifies existing SL trigger order to breakeven price via OpenAlgo."""

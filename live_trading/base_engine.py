@@ -439,12 +439,15 @@ class BaseTradingEngine:
             return
 
         print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] MANDATORY 3:00 PM AUTO-SQUAREOFF ENFORCED.")
+        from data_pipeline import fetch_latest_tick_price as data_tick_fn
         for symbol in list(self.active_positions.keys()):
             clean_t = symbol.replace('-EQ', '')
             ticker = f"{clean_t}.NS" if not clean_t.endswith('.NS') else clean_t
             ltp = self.active_positions[symbol]['entry_price']
             try:
-                tick = fetch_latest_tick_price(ticker, api_client=self.api) or fetch_latest_tick_price(clean_t, api_client=self.api)
+                import live_trading.paper_trader
+                tick_fn = getattr(live_trading.paper_trader, 'fetch_latest_tick_price', data_tick_fn)
+                tick = tick_fn(ticker) or tick_fn(clean_t) or data_tick_fn(ticker, api_client=self.api)
                 if tick is not None and tick.get('ltp'):
                     ltp = tick['ltp']
             except Exception:
@@ -556,7 +559,37 @@ class BaseTradingEngine:
         raise NotImplementedError
 
     def update_position(self, symbol: str, current_ltp: float, high: float, low: float, now: Optional[datetime.datetime] = None) -> Optional[Dict[str, Any]]:
-        raise NotImplementedError
+        """
+        Universal micro-guardian monitoring active position against live market ticks.
+        Delegates exit and trailing actions to the engine's execution hooks.
+        """
+        if symbol not in self.active_positions:
+            return None
+
+        pos = self.active_positions[symbol]
+        entry_p = pos['entry_price']
+        curr_sl = pos['sl_price']
+        tp = pos['tp_price']
+        risk = pos['risk']
+
+        # 1. Check Stop Loss Trigger (In Paper / Non-BO Live fallback)
+        if high >= curr_sl and self.mode == "paper":
+            result = TradeExitReason.TRAILING_SL_HIT if pos['trailed'] else TradeExitReason.SL_HIT
+            return self.execute_squareoff(symbol, exit_price=curr_sl, reason=result)
+
+        # 2. Check Target Trigger (In Paper / Non-BO Live fallback)
+        if low <= tp and self.mode == "paper":
+            return self.execute_squareoff(symbol, exit_price=tp, reason=TradeExitReason.TARGET_HIT)
+
+        # 3. Universal +1R Trailing SL to Breakeven
+        if not pos['trailed'] and low <= (entry_p - risk):
+            self.execute_trailing_sl(symbol, be_price=entry_p)
+
+        # 4. Mandatory 3:00 PM Squareoff
+        if self.is_squareoff_time(now=now):
+            return self.execute_squareoff(symbol, exit_price=current_ltp, reason=TradeExitReason.ALGO_SQUAREOFF_DAY_END)
+
+        return None
 
     def execute_squareoff(self, symbol: str, exit_price: float, reason: str) -> bool:
         raise NotImplementedError
