@@ -108,7 +108,7 @@ class ThrottledIngestionEngine:
     @staticmethod
     def _format_symbol(symbol: str) -> str:
         clean_symbol = symbol.strip().upper()
-        if settings.SHOONYA_APPEND_EQ and settings.EXCHANGE == "NSE" and not clean_symbol.endswith("-EQ"):
+        if getattr(settings, 'APPEND_EQ', getattr(settings, 'SHOONYA_APPEND_EQ', False)) and settings.EXCHANGE == "NSE" and not clean_symbol.endswith("-EQ"):
             return f"{clean_symbol}-EQ"
         return clean_symbol
 

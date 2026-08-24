@@ -29,7 +29,7 @@ class TestOpenAlgoIngestion(unittest.TestCase):
             LOG_PATH=storage / "ingestion.log",
             OPENALGO_API_KEY="test-key",
             OPENALGO_HOST="http://openalgo.test",
-            SHOONYA_APPEND_EQ=False,
+            APPEND_EQ=False,
             DELAY_SECONDS=0,
             PROBE_DELAY_SECONDS=0,
         )
@@ -60,9 +60,9 @@ class TestOpenAlgoIngestion(unittest.TestCase):
             self.engine_class.generate_date_range_chunks("2026-08-21", "2026-08-20")
 
     def test_formats_eq_suffix_only_when_enabled(self):
-        with patch.object(self.settings, "SHOONYA_APPEND_EQ", False):
+        with patch.object(self.settings, "APPEND_EQ", False, create=True):
             self.assertEqual(self.engine_class._format_symbol("reliance"), "RELIANCE")
-        with patch.object(self.settings, "SHOONYA_APPEND_EQ", True):
+        with patch.object(self.settings, "APPEND_EQ", True, create=True):
             self.assertEqual(self.engine_class._format_symbol("reliance"), "RELIANCE-EQ")
             self.assertEqual(self.engine_class._format_symbol("RELIANCE-EQ"), "RELIANCE-EQ")
 
