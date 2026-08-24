@@ -183,11 +183,25 @@ def load_candle_data(
 
 
 def fetch_nifty_benchmark(
-    period: str = "60d",
+    period: Any = "60d",
     interval: str = "15m",
     force_refresh: bool = False,
-    universe: str = "NIFTY50"
+    universe: str = "NIFTY50",
+    **kwargs
 ) -> pd.Series:
+    """
+    Retrieves Benchmark for Relative Weakness calculation:
+      - If DuckDB exists, builds high-fidelity equal-weighted market index over the full DuckDB historical span.
+      - Otherwise loads NIFTY 50 Benchmark (^NSEI) from local archive or yfinance.
+    """
+    # If TradingConfig object passed as first positional arg
+    if hasattr(period, 'TIMEFRAME'):
+        cfg = period
+        interval = getattr(cfg, 'TIMEFRAME', interval)
+        period = "60d"
+    elif not isinstance(period, str):
+        period = "60d"
+
     """
     Retrieves Benchmark for Relative Weakness calculation:
       - If DuckDB exists, builds high-fidelity equal-weighted market index over the full DuckDB historical span.
