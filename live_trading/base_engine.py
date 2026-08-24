@@ -88,16 +88,24 @@ ES_AWAYMODE_REQUIRED = 0x00000040
 def prevent_sleep_context():
     """
     Context manager that requests Windows OS execution state to stay awake.
+    On non-Windows platforms (Linux VPS), gracefully no-ops.
     """
+    import sys
+    if sys.platform != 'win32':
+        yield
+        return
+
     try:
         import ctypes
         flags = ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_AWAYMODE_REQUIRED
-        ctypes.windll.kernel32.SetThreadExecutionState(flags)
+        if hasattr(ctypes, 'windll') and hasattr(ctypes.windll, 'kernel32'):
+            ctypes.windll.kernel32.SetThreadExecutionState(flags)
         yield
     finally:
         try:
             import ctypes
-            ctypes.windll.kernel32.SetThreadExecutionState(ES_CONTINUOUS)
+            if hasattr(ctypes, 'windll') and hasattr(ctypes.windll, 'kernel32'):
+                ctypes.windll.kernel32.SetThreadExecutionState(ES_CONTINUOUS)
         except Exception:
             pass
 
