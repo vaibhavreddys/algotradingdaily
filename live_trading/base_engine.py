@@ -1,86 +1,24 @@
-
-from contextlib import contextmanager
-
-# Win32 Execution State Flags for Sleep Prevention (Issue #21)
-ES_CONTINUOUS = 0x80000000
-ES_SYSTEM_REQUIRED = 0x00000001
-ES_AWAYMODE_REQUIRED = 0x00000040
-
-
-@contextmanager
-def prevent_sleep_context():
-    """
-    Context manager to programmatically prevent the OS from entering sleep or standby mode
-    during the execution of the trading daemon (including overnight runs, pre-market waiting, and live sessions).
-    Restores normal power settings upon graceful shutdown or Ctrl+C.
-      - Windows: Win32 SetThreadExecutionState
-      - macOS: caffeinate subprocess
-      - Linux: clean no-op
-    """
-    proc = None
-    if sys.platform == "win32":
-        import ctypes
-        try:
-            ctypes.windll.kernel32.SetThreadExecutionState(
-                ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_AWAYMODE_REQUIRED
-            )
-            print("[POWER] ⚡ System sleep inhibitor ACTIVATED (Process will stay awake).")
-        except Exception as e:
-            print(f"[POWER] ⚠️ Could not set thread execution state: {e}")
-    elif sys.platform == "darwin":
-        import shutil
-        import subprocess
-        try:
-            caffeinate_bin = shutil.which("caffeinate")
-            if caffeinate_bin:
-                proc = subprocess.Popen(
-                    [caffeinate_bin, "-is"],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                )
-                print("[POWER] ⚡ System sleep inhibitor ACTIVATED (Process will stay awake).")
-            else:
-                print("[POWER] ⚠️ 'caffeinate' not found; system may sleep during long waits.")
-        except Exception as e:
-            print(f"[POWER] ⚠️ Could not start caffeinate: {e}")
-    try:
-        yield
-    finally:
-        if sys.platform == "win32":
-            import ctypes
-            try:
-                ctypes.windll.kernel32.SetThreadExecutionState(ES_CONTINUOUS)
-                print("[POWER] 💤 System sleep inhibitor RELEASED (Restored OS power defaults).")
-            except Exception:
-                pass
-        elif proc is not None:
-            try:
-                proc.terminate()
-                proc.wait(timeout=5)
-                print("[POWER] 💤 System sleep inhibitor RELEASED (Restored OS power defaults).")
-            except Exception:
-                pass
-
 """
-Base Live Trading Execution Daemon & Order Management Framework.
+Base Live Trading & Risk Management Architecture.
 
-Provides shared runtime capabilities:
-  - Automated TOTP authentication for Shoonya API
-  - Synchronized market clock & 15-minute candle interval scheduler
-  - Position lifecycle & trailing stop-loss state machine (+1R -> Breakeven)
-  - 15:00 IST auto-squareoff enforcement
+Provides the universal execution daemon, risk guardian, and scheduler:
+  - Multi-threaded universe scanner on 15m candle closes (:00, :15, :30, :45)
+  - Pre-warming benchmark relative weakness feeds (~5s before close)
+  - Micro 15-second guardian loop for active positions & +1R Trailing SL to Breakeven
+  - Automated market calendar checks, holiday handling, and pre-market sleep
+  - Daily 3% circuit breaker enforcement & 15:00 mandatory squareoff
+  - End-Of-Day (EOD) reporting & automated past-session stale trade reconciliation
 """
 
 import os
 import sys
+import time
 import datetime
-# pyrefly: ignore [missing-import]
-import pyotp
-from typing import List, Dict, Any, Optional, Tuple, Iterator
-# pyrefly: ignore [missing-import]
-from NorenRestApiPy.NorenApi import NorenApi
+from typing import Dict, Any, Optional, List, Tuple
+from concurrent.futures import ThreadPoolExecutor
+import pandas as pd
 
-# Ensure workspace root is in sys.path
+# Ensure workspace root is in sys.path for direct script execution
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 if hasattr(sys.stdout, 'reconfigure'):
@@ -91,30 +29,89 @@ if hasattr(sys.stdout, 'reconfigure'):
         pass
 
 from config import CONFIG, TradingConfig
-from core.capital import get_persisted_paper_capital
+from core.market_calendar import is_market_open as is_mc_open, is_market_closed as is_mc_closed, get_next_market_session as get_mc_next_session, get_seconds_until_market_open as get_mc_sec_open, get_seconds_until_entry_window as get_mc_sec_entry, is_entry_window_active as is_mc_entry_active, is_squareoff_time as is_mc_sqoff
+from core.capital import calculate_order_quantity, get_persisted_paper_capital
 from core.risk import is_daily_loss_limit_reached
-from core.trade_db import get_today_realized_pnl
-from core.market_calendar import (
-    is_market_open, is_market_closed, is_entry_window_active, is_squareoff_time,
-    get_seconds_until_market_open, get_seconds_until_entry_window, get_next_market_session
+from core.trade_db import (
+    TradeExitReason,
+    EXIT_DISPLAY_LABELS,
+    save_active_position,
+    update_trailing_sl,
+    close_and_archive_position,
+    get_active_positions,
+    get_stale_positions,
+    reconcile_stale_positions,
+    get_db_path,
+    get_trade_journal,
 )
-from data_pipeline import get_nifty50_symbols
+from alerts import notify_trade_entry, notify_trailing_sl, notify_trade_exit, notify_eod_summary
+from strategies.vwap_stoch_breakdown import (
+    STRATEGY_NAME,
+    STRATEGY_VERSION,
+    TIMEFRAME,
+    SWING_HIGH_BARS,
+    evaluate_signals,
+    calculate_stop_and_target,
+)
+from data_pipeline import (
+    get_nifty50_symbols,
+    fetch_nifty_benchmark,
+    fetch_verified_candles,
+    fetch_latest_tick_price,
+)
+
+try:
+    from NorenRestApiPy.NorenApi import NorenApi
+except ImportError:
+    class NorenApi:
+        def __init__(self, *args, **kwargs): pass
+        def set_session(self, *args, **kwargs): pass
+        def get_limits(self, *args, **kwargs): return None
+        def searchscrip(self, *args, **kwargs): return None
+        def get_quotes(self, *args, **kwargs): return None
+        def get_time_price_series(self, *args, **kwargs): return None
+        def place_order(self, *args, **kwargs): return None
+        def modify_order(self, *args, **kwargs): return None
+        def cancel_order(self, *args, **kwargs): return None
+
+
+from contextlib import contextmanager
+
+
+ES_CONTINUOUS = 0x80000000
+ES_SYSTEM_REQUIRED = 0x00000001
+ES_DISPLAY_REQUIRED = 0x00000002
+ES_AWAYMODE_REQUIRED = 0x00000040
+
+@contextmanager
+def prevent_sleep_context():
+    """
+    Context manager that requests Windows OS execution state to stay awake.
+    """
+    try:
+        import ctypes
+        flags = ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_AWAYMODE_REQUIRED
+        ctypes.windll.kernel32.SetThreadExecutionState(flags)
+        yield
+    finally:
+        try:
+            import ctypes
+            ctypes.windll.kernel32.SetThreadExecutionState(ES_CONTINUOUS)
+        except Exception:
+            pass
 
 
 class BaseTradingEngine(NorenApi):
     """
-    Base trading engine containing shared authentication, market clock,
-    position tracking, and risk management logic.
+    Universal Foundation for Strategy Execution, Risk Control, and Broker Communication.
     """
-    def __init__(self, config: TradingConfig = CONFIG):
+    def __init__(self, config: TradingConfig = CONFIG, mode: str = "paper"):
         super().__init__(
-            host='https://api.shoonya.com/NorenWSTScript/', 
+            host='https://api.shoonya.com/NorenWSTScript/',
             websocket='wss://api.shoonya.com/NorenWSTScript/'
         )
         self.config = config
-        self.active_positions: Dict[str, Dict[str, Any]] = {}
-
-        self.cached_nifty_benchmark: Optional[Any] = None
+        self.mode = mode.lower()
         self.user = os.getenv("SHOONYA_USER")
         self.pwd = os.getenv("SHOONYA_PWD")
         self.api_key = os.getenv("SHOONYA_API_KEY")
@@ -122,203 +119,470 @@ class BaseTradingEngine(NorenApi):
         self.totp_key = os.getenv("SHOONYA_TOTP_KEY")
         self.imei = os.getenv("SHOONYA_IMEI", "shoonya_algo_desktop")
 
+        self.api = None
+        self.authenticated = False
+        self.active_positions: Dict[str, Dict[str, Any]] = {}
+        self.closed_trades: List[Dict[str, Any]] = []
+        self._cached_benchmark: Optional[pd.Series] = None
+        self._benchmark_timestamp: Optional[datetime.datetime] = None
+
+        self.day_starting_capital = self.get_account_capital()
+
     def is_daily_circuit_breaker_active(self) -> bool:
-        """
-        Checks if today's cumulative realized losses meet or exceed the 3% max daily loss limit.
-        """
-        today_pnl = get_today_realized_pnl(mode=self.config.TRADING_MODE)
-        start_cap = self.get_account_capital()
+        """Checks if daily realized drawdowns have reached the daily safety threshold."""
+        curr_cap = self.get_account_capital()
         return is_daily_loss_limit_reached(
-            today_realized_pnl=today_pnl,
-            day_starting_capital=start_cap,
+            starting_capital=self.day_starting_capital,
+            current_capital=curr_cap,
             max_loss_pct=self.config.MAX_DAILY_LOSS_PCT
         )
 
     def get_account_capital(self) -> float:
-        """
-        Returns the current active account capital:
-          - Live Mode: Queries live Shoonya broker funds API (api.get_limits()).
-          - Paper Mode: Reconstructs cumulative balance from SQLite paper_trades.db.
-        """
-        if self.config.TRADING_MODE == "live" and self.api:
+        """Returns the active available capital for position sizing."""
+        if (self.mode == "live" or getattr(self.config, 'TRADING_MODE', 'paper') == "live") and self.api:
             try:
                 limits = self.api.get_limits()
                 if limits and limits.get('stat') == 'Ok':
+                    # Check payin / cash / net fields
                     cash = float(limits.get('cash', 0.0))
+                    margin_used = float(limits.get('marginused', 0.0))
                     payin = float(limits.get('payin', 0.0))
-                    marginused = float(limits.get('marginused', 0.0))
-                    available = cash + payin - marginused
-                    if available > 0:
-                        return available
-            except Exception as e:
-                print(f"⚠️ Failed to fetch live broker limits ({e}). Falling back to default.")
-        return get_persisted_paper_capital(initial_capital=self.config.INITIAL_CAPITAL, mode=self.config.TRADING_MODE)
+                    net_avail = (cash + payin) - margin_used
+                    if net_avail > 0:
+                        return net_avail
+                    if 'net' in limits:
+                        return float(limits['net'])
+            except Exception:
+                pass
+            return float(self.config.INITIAL_CAPITAL)
+        return get_persisted_paper_capital(initial_capital=self.config.INITIAL_CAPITAL, mode=self.mode)
 
     def prewarm_benchmark_feed(self) -> bool:
-        """
-        Pre-fetches NIFTY 50 benchmark index ~5s before candle boundary into in-memory RAM
-        to eliminate network latency on candle close.
-        """
-        from data_pipeline import fetch_nifty_benchmark
+        """Pre-warms the benchmark feed ~5s before candle close to eliminate scanning latency."""
         try:
-            feed = fetch_nifty_benchmark(period="5d", interval=self.config.TIMEFRAME)
+            feed = fetch_nifty_benchmark(period="5d", interval=getattr(self.config, 'TIMEFRAME', TIMEFRAME), force_refresh=True)
             if feed is not None and not feed.empty:
-                self.cached_nifty_benchmark = feed
+                self._cached_benchmark = feed
+                self._benchmark_timestamp = datetime.datetime.now()
                 return True
-            return False
         except Exception:
-            return False
+            pass
+        return False
 
     def get_benchmark_feed(self) -> Any:
-        """Returns pre-warmed benchmark feed or performs on-demand fallback fetch."""
-        from data_pipeline import fetch_nifty_benchmark
-        if self.cached_nifty_benchmark is not None and not self.cached_nifty_benchmark.empty:
-            feed = self.cached_nifty_benchmark
-            self.cached_nifty_benchmark = None  # Consume cache
-            return feed
-        return fetch_nifty_benchmark(period="5d", interval=self.config.TIMEFRAME)
+        """Returns the latest benchmark series for relative weakness filtering."""
+        now = datetime.datetime.now()
+        if (
+            self._cached_benchmark is not None
+            and self._benchmark_timestamp is not None
+            and (now - self._benchmark_timestamp).total_seconds() < 120
+        ):
+            return self._cached_benchmark
+
+        feed = fetch_nifty_benchmark(period="5d", interval=getattr(self.config, 'TIMEFRAME', TIMEFRAME), force_refresh=True)
+        self._cached_benchmark = feed
+        self._benchmark_timestamp = now
+        return feed
 
     def authenticate(self) -> bool:
-        """Performs automated TOTP authentication with Shoonya or falls back to virtual mode."""
-        is_placeholder = (
-            not self.user or not self.totp_key or 
-            "your_" in (self.user or "").lower() or 
-            "your_" in (self.totp_key or "").lower()
-        )
-        if is_placeholder:
-            print("⚠️ Shoonya credentials not configured. Running in Offline Virtual Mode (yfinance feed).")
-            return False
+        """Performs automated TOTP authentication with Shoonya or marks virtual ready."""
+        if self.mode == "paper" and not self.user:
+            print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] 🛡️ [PAPER MODE] Virtual execution active (No real broker orders).")
+            self.authenticated = True
+            return True
+
+        if not all([self.user, self.pwd, self.api_key, self.vendor_code, self.totp_key]):
+            print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] ⚠️ Shoonya credentials incomplete in .env. Running in virtual fallback mode.")
+            self.authenticated = True
+            return True
 
         try:
-            totp = pyotp.TOTP(self.totp_key).now()
-            res = self.login(
-                userid=self.user, password=self.pwd, twoFA=totp,
-                vendor_code=self.vendor_code, api_secret=self.api_key, imei=self.imei
+            import pyotp
+            totp = pyotp.TOTP(self.totp_key)
+            current_totp = totp.now()
+
+            ret = self.login(
+                userid=self.user,
+                password=self.pwd,
+                twoFA=current_totp,
+                vendor_code=self.vendor_code,
+                api_secret=self.api_key,
+                imei=self.imei
             )
-            if res and res.get('stat') == 'Ok':
-                print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] ✅ Authenticated to Shoonya API.")
+
+            if ret and ret.get('stat') == 'Ok':
+                print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] ✅ Authenticated with Finvasia Shoonya OMS.")
+                self.api = self
+                self.authenticated = True
                 return True
-            print("❌ Authentication Failed:", res)
-            return False
+            else:
+                print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] ❌ Shoonya authentication failed: {ret}")
+                return False
         except Exception as e:
-            print(f"⚠️ Shoonya Auth Exception ({e}). Running in Offline Virtual Mode.")
+            print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] ❌ Exception during Shoonya auth: {e}")
             return False
 
     def get_seconds_until_market_open(self, now: Optional[datetime.datetime] = None) -> int:
-        """Calculates exact seconds remaining until market open today."""
-        return get_seconds_until_market_open(market_key=self.config.EXCHANGE_MARKET, now=now)
+        return get_mc_sec_open(getattr(self.config, 'EXCHANGE', 'NSE'), now=now)
 
     def get_seconds_until_entry_window(self, now: Optional[datetime.datetime] = None) -> int:
-        """Calculates exact seconds remaining until strategy entry window open today."""
-        return get_seconds_until_entry_window(market_key=self.config.EXCHANGE_MARKET, now=now)
+        return get_mc_sec_entry(getattr(self.config, 'EXCHANGE', 'NSE'), now=now)
 
     def get_next_market_session(self, now: Optional[datetime.datetime] = None) -> Tuple[datetime.datetime, int]:
-        """Calculates the next upcoming trading session opening."""
-        return get_next_market_session(market_key=self.config.EXCHANGE_MARKET, now=now)
+        return get_mc_next_session(getattr(self.config, 'EXCHANGE', 'NSE'), now=now)
 
     def is_market_open(self, now: Optional[datetime.datetime] = None) -> bool:
-        """Checks if current time is within official market session hours."""
-        return is_market_open(market_key=self.config.EXCHANGE_MARKET, now=now)
+        return is_mc_open(getattr(self.config, 'EXCHANGE', 'NSE'), now=now)
 
     def is_market_closed(self, now: Optional[datetime.datetime] = None) -> bool:
-        """Checks if today's market session has concluded."""
-        return is_market_closed(market_key=self.config.EXCHANGE_MARKET, now=now)
+        return is_mc_closed(getattr(self.config, 'EXCHANGE', 'NSE'), now=now)
 
     def is_entry_window_active(self, now: Optional[datetime.datetime] = None) -> bool:
-        """Checks if current time is within the strategy entry window."""
-        return is_entry_window_active(market_key=self.config.EXCHANGE_MARKET, now=now)
+        return is_mc_entry_active(getattr(self.config, 'EXCHANGE', 'NSE'), now=now)
 
     def is_squareoff_time(self, now: Optional[datetime.datetime] = None) -> bool:
-        """Checks if current time has reached mandatory auto-squareoff threshold."""
-        return is_squareoff_time(market_key=self.config.EXCHANGE_MARKET, now=now)
-
-    def render_filter_funnel(
-        self,
-        eval_count: int,
-        total_symbols: int,
-        rel_weak_count: int,
-        vwap_count: int,
-        adx_count: int,
-        stoch_count: int,
-        signals_fired: int
-    ) -> None:
-        """
-        Renders an itemized ASCII filter funnel breakdown after evaluating the trading universe.
-        """
-        open_slots = len(self.active_positions)
-        max_slots = self.config.MAX_CONCURRENT_POSITIONS
-        now_str = datetime.datetime.now().strftime("%H:%M:%S")
-
-        print(f"[{now_str}] 📊 15m Scan Funnel ({eval_count}/{total_symbols} constituents evaluated):")
-        print(f"    • Relative Weakness vs NIFTY : {rel_weak_count:>2d}/{total_symbols} stocks")
-        print(f"    • Price < Intraday VWAP       : {vwap_count:>2d}/{total_symbols} stocks")
-        print(f"    • Strong ADX Trend (ADX > 25) : {adx_count:>2d}/{total_symbols} stocks")
-        print(f"    • Stochastic RSI Breakdown    : {stoch_count:>2d}/{total_symbols} stocks")
-        print(f"    ---------------------------------------------")
-        print(f"    ⭐ Qualified Entries Fired    : {signals_fired:>2d} trade(s) | Open Slots: {open_slots}/{max_slots}")
+        return is_mc_sqoff(getattr(self.config, 'EXCHANGE', 'NSE'), now=now)
 
     def get_seconds_until_next_candle(self, interval_mins: int = 15, now: Optional[datetime.datetime] = None) -> int:
-        """
-        Calculates exact seconds remaining until the next 15-minute candle boundary (:00, :15, :30, :45).
-        Adds a small 3-second buffer to guarantee the candle bar has officially closed.
-        """
         now = now or datetime.datetime.now()
-        current_minute = now.minute
-        current_second = now.second
-        
-        minutes_into_interval = current_minute % interval_mins
-        minutes_remaining = interval_mins - minutes_into_interval - 1
-        seconds_remaining = (minutes_remaining * 60) + (60 - current_second) + 3
-        return max(seconds_remaining, 5)
-
-    def get_trading_universe(self) -> List[str]:
-        """Returns symbols formatted for Shoonya NSE cash trading (e.g. INFY-EQ)."""
-        symbols = get_nifty50_symbols()
-        return [f"{s.replace('.NS', '')}-EQ" for s in symbols]
+        curr_min = now.minute
+        curr_sec = now.second
+        remainder = curr_min % interval_mins
+        wait_mins = interval_mins - remainder if remainder != 0 else (interval_mins if curr_sec > 5 else 0)
+        wait_secs = (wait_mins * 60) - curr_sec + 2
+        return max(1, wait_secs)
 
     def sync_active_positions_from_db(self, mode: Optional[str] = None) -> int:
-        """Restores open trade state from SQLite database on engine startup/recovery and resolves past-session stale trades."""
-        from core.trade_db import get_active_positions, get_stale_positions, reconcile_stale_positions, get_db_path
+        """Restores open trade state from SQLite database on engine startup/recovery."""
+        target_mode = (mode or self.mode).lower()
         
-        target_mode = (mode or self.config.TRADING_MODE).lower()
-        db_path = get_db_path(target_mode)
-        
-        # 1. Startup Sanity Diagnostics & Automated Calendar Reconciler (Issue #15)
+        # Pre-market automated calendar reconciler
         stale_positions = get_stale_positions(mode=target_mode)
         if stale_positions:
             print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] ⚠️ Detected {len(stale_positions)} stale position(s) from past session(s). Starting automated reconciliation...")
             reconciled = reconcile_stale_positions(mode=target_mode)
             for r in reconciled:
-                print(f"    ✅ Reconciled: {r['symbol']} | Exited @ ₹{r['exit_price']} ({r['exit_time']}) | Result: {r['result']} | Net PnL: ₹{r['net_pnl']:+,.2f}")
-            print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] 🛡️ Pre-market reconciliation complete: All stale positions archived.")
-        else:
-            print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] ✅ Database Sanity Check: 0 stale positions detected in {db_path}.")
+                print(f"    ✓ Reconciled: {r['symbol']} | Exited @ ₹{r['exit_price']} ({r['exit_time']}) | Result: {r['result']} | Net PnL: ₹{r['net_pnl']:+,.2f}")
+            print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] 🚀 Pre-market reconciliation complete: All stale positions archived.")
 
-        # 2. Live Broker Position Book Cross-Verification (Issue #16)
+        active_db_rows = get_active_positions(mode=target_mode)
+        self.active_positions.clear()
+        
+        # Check live broker positions (via self.get_positions or self.api.get_positions)
+        broker_positions_map = {}
         if target_mode == "live":
             try:
-                broker_positions = self.get_positions()
-                if isinstance(broker_positions, list):
-                    broker_net_map = {
-                        p.get('tsym'): int(p.get('netqty', 0))
-                        for p in broker_positions if p.get('tsym')
-                    }
-                    active_db_positions = get_active_positions(mode="live")
-                    for pos in active_db_positions:
-                        sym = pos['symbol']
-                        broker_qty = broker_net_map.get(sym, 0)
-                        if broker_qty == 0:
-                            print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] 🔍 Broker Cross-Check: {sym} has 0 net qty at Shoonya. Reconciling...")
-                            reconciled = reconcile_stale_positions(mode="live", specific_symbol=sym)
-                            for r in reconciled:
-                                print(f"    ✅ Reconciled Broker Auto-Close: {r['symbol']} | Exited @ ₹{r['exit_price']} | Net PnL: ₹{r['net_pnl']:+,.2f}")
-            except Exception as e:
-                print(f"⚠️ Live broker position verification skipped: {e}")
+                get_pos_fn = getattr(self, 'get_positions', None) or (self.api.get_positions if self.api else None)
+                if get_pos_fn:
+                    b_pos_list = get_pos_fn()
+                    if b_pos_list and isinstance(b_pos_list, list):
+                        for bp in b_pos_list:
+                            tsym = bp.get('tsym')
+                            netqty = int(bp.get('netqty', 0))
+                            if tsym:
+                                broker_positions_map[tsym] = netqty
+                                clean = tsym.replace('-EQ', '').replace('.NS', '')
+                                broker_positions_map[clean] = netqty
+            except Exception:
+                pass
 
-        # 3. Restore active positions into in-memory state
-        self.active_positions.clear()
-        saved = get_active_positions(mode=target_mode)
-        for pos in saved:
-            self.active_positions[pos['symbol']] = pos
-        print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] 🔄 State synchronized: {len(self.active_positions)} active position(s) loaded from DB.")
+        for row in active_db_rows:
+            sym = row['symbol']
+            clean_s = sym.replace('.NS', '').replace('-EQ', '')
+            if broker_positions_map:
+                found_zero = False
+                for b_sym, b_qty in broker_positions_map.items():
+                    b_clean = b_sym.replace('.NS', '').replace('-EQ', '')
+                    if b_clean == clean_s and b_qty == 0:
+                        found_zero = True
+                        break
+                if found_zero:
+                    close_and_archive_position(
+                        symbol=sym,
+                        exit_price=row['entry_price'],
+                        exit_time=datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                        result=TradeExitReason.ALGO_SQUAREOFF_DAY_END,
+                        gross_pnl=0.0,
+                        taxes_fees=0.0,
+                        net_pnl=0.0,
+                        mode="live"
+                    )
+                    continue
+
+            self.active_positions[sym] = {
+                'symbol': sym,
+                'entry_price': row['entry_price'],
+                'entry_time': row.get('entry_time'),
+                'qty': row['quantity'],
+                'sl_price': row['current_sl'],
+                'tp_price': row['target_price'],
+                'risk': abs(row['current_sl'] - row['entry_price']),
+                'trailed': (row['current_sl'] <= row['entry_price']),
+                'entry_order_id': row.get('entry_order_id'),
+                'sl_order_id': row.get('sl_order_id'),
+            }
+        print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] 📂 Restored {len(self.active_positions)} active position(s) from {get_db_path(target_mode)}.")
         return len(self.active_positions)
+
+    def _evaluate_single_symbol(self, ticker: str, nifty_pct_map: pd.Series) -> Optional[Dict[str, Any]]:
+        """Worker function to fetch and evaluate strategy signals for a single symbol."""
+        try:
+            raw_df = fetch_verified_candles(
+                ticker,
+                period="5d",
+                interval=getattr(self.config, 'TIMEFRAME', TIMEFRAME),
+                api_client=self.api
+            )
+            if raw_df is None or len(raw_df) < (getattr(self.config, 'SWING_HIGH_BARS', SWING_HIGH_BARS) + 5):
+                return None
+
+            df = evaluate_signals(raw_df, nifty_pct_map, config=self.config)
+            if df is None or len(df) == 0:
+                return None
+
+            last_idx = len(df) - 1
+            last_row = df.iloc[last_idx]
+            swing_high = float(df.iloc[last_idx - getattr(self.config, 'SWING_HIGH_BARS', SWING_HIGH_BARS) : last_idx]['High'].max()) if last_idx >= getattr(self.config, 'SWING_HIGH_BARS', SWING_HIGH_BARS) else 0.0
+
+            return {
+                'ticker': ticker,
+                'sym_key': f"{ticker.replace('.NS', '')}-EQ",
+                'last_row': last_row,
+                'swing_high': swing_high,
+                'signal': bool(last_row.get('Signal', False)),
+                'rel_weak_pass': bool(last_row.get('Rel_Weakness_Pass', False)),
+                'vwap_pass': bool(last_row.get('VWAP_Pass', False)),
+                'adx_pass': bool(last_row.get('ADX_Pass', False)),
+                'stoch_pass': bool(last_row.get('Stoch_Pass', False)),
+            }
+        except Exception:
+            return None
+
+
+    def render_filter_funnel(
+        self,
+        eval_count: int = 50,
+        total_symbols: int = 50,
+        rel_weak_count: int = 0,
+        vwap_count: int = 0,
+        adx_count: int = 0,
+        stoch_count: int = 0,
+        signals_fired: int = 0,
+        **kwargs
+    ) -> str:
+        """Renders formatted funnel telemetry string."""
+        open_slots = max(0, self.config.MAX_CONCURRENT_POSITIONS - len(self.active_positions) - signals_fired)
+        lines = [
+            f"[{datetime.datetime.now().strftime('%H:%M:%S')}] 📊 15m Scan Funnel ({eval_count}/{total_symbols} constituents evaluated):",
+            f"  • Relative Weakness vs NIFTY : {rel_weak_count:>2}/{total_symbols} stocks",
+            f"  • Price < Intraday VWAP       : {vwap_count:>2}/{total_symbols} stocks",
+            f"  • Strong ADX Trend (ADX > 25) : {adx_count:>2}/{total_symbols} stocks",
+            f"  • Stochastic RSI Breakdown    : {stoch_count:>2}/{total_symbols} stocks",
+            f"  • Qualified Entries Fired    : {signals_fired:>2} trade(s) | Open Slots: {kwargs.get('open_slots', len(self.active_positions))}/{self.config.MAX_CONCURRENT_POSITIONS}"
+        ]
+        msg = "\n".join(lines)
+        print(msg)
+        return msg
+
+    def scan_and_execute_signals(self, nifty_pct_map: pd.Series) -> None:
+        """Scans the universe across worker threads on 15m candle close boundaries."""
+        if self.is_daily_circuit_breaker_active():
+            print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] 🛑 [CIRCUIT BREAKER] Daily Loss reached. Halting new scan entries.")
+            return
+
+        symbols = get_nifty50_symbols()
+        total_symbols = len(symbols)
+
+        funnel_stats = {
+            'total_universe': total_symbols,
+            'rel_weakness_passed': 0,
+            'vwap_passed': 0,
+            'adx_passed': 0,
+            'stoch_passed': 0,
+            'final_signals': 0
+        }
+
+        candidates = []
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            futures = [executor.submit(self._evaluate_single_symbol, t, nifty_pct_map) for t in symbols]
+            for f in futures:
+                res = f.result()
+                if res is None:
+                    continue
+                if res['rel_weak_pass']: funnel_stats['rel_weakness_passed'] += 1
+                if res['vwap_pass']: funnel_stats['vwap_passed'] += 1
+                if res['adx_pass']: funnel_stats['adx_passed'] += 1
+                if res['stoch_pass']: funnel_stats['stoch_passed'] += 1
+
+                if res['signal']:
+                    funnel_stats['final_signals'] += 1
+                    candidates.append((res['ticker'], res['sym_key'], res['last_row'], res['swing_high']))
+
+        # Print Funnel Telemetry
+        print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] 📊 15m Filter Funnel: "
+              f"Universe({funnel_stats['total_universe']}) -> "
+              f"RelWeak({funnel_stats['rel_weakness_passed']}) -> "
+              f"VWAP({funnel_stats['vwap_passed']}) -> "
+              f"ADX({funnel_stats['adx_passed']}) -> "
+              f"Stoch({funnel_stats['stoch_passed']}) -> "
+              f"Signals({funnel_stats['final_signals']})")
+
+        # Execute qualifying candidates if open slots exist
+        for ticker, sym_key, row, swing_high in candidates:
+            if len(self.active_positions) >= self.config.MAX_CONCURRENT_POSITIONS:
+                break
+            if sym_key in self.active_positions:
+                continue
+
+            entry_p = float(row['Close'])
+            sl_p, tp_p = calculate_stop_and_target(entry_price=entry_p, swing_high=swing_high, config=self.config)
+
+            # Delegate order placement to child class hook
+            self.execute_entry(symbol=sym_key, entry_price=entry_p, sl_price=sl_p, tp_price=tp_p)
+
+    def monitor_active_positions(self) -> None:
+        """Micro 15-second guardian checking active positions for SL/TP hits & +1R Trailing SL."""
+        if not self.active_positions:
+            return
+
+        for symbol in list(self.active_positions.keys()):
+            ticker = f"{symbol.replace('-EQ', '')}.NS"
+            try:
+                tick = fetch_latest_tick_price(ticker, api_client=self.api)
+                if tick is None:
+                    continue
+                ltp = tick['ltp']
+                high = tick['high']
+                low = tick['low']
+
+                self.update_position(symbol=symbol, current_ltp=ltp, high=high, low=low)
+            except Exception:
+                continue
+
+    def squareoff_all_positions(self) -> None:
+        """Mandatory 3:00 PM square-off for all remaining open positions."""
+        if not self.active_positions:
+            return
+
+        print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] MANDATORY 3:00 PM AUTO-SQUAREOFF ENFORCED.")
+        for symbol in list(self.active_positions.keys()):
+            clean_t = symbol.replace('-EQ', '')
+            ticker = f"{clean_t}.NS" if not clean_t.endswith('.NS') else clean_t
+            ltp = self.active_positions[symbol]['entry_price']
+            try:
+                tick = fetch_latest_tick_price(ticker, api_client=self.api) or fetch_latest_tick_price(clean_t, api_client=self.api)
+                if tick is not None and tick.get('ltp'):
+                    ltp = tick['ltp']
+            except Exception:
+                pass
+
+            self.execute_squareoff(symbol=symbol, exit_price=ltp, reason=TradeExitReason.ALGO_SQUAREOFF_DAY_END)
+
+    def generate_eod_report(self) -> None:
+        """Generates End-Of-Day performance report from trade database."""
+        today_date = datetime.datetime.now().strftime('%Y-%m-%d')
+        all_trades = get_trade_journal(mode=self.mode, limit=500)
+        day_trades = [t for t in all_trades if str(t.get('exit_time', '')).startswith(today_date)]
+
+        from core.report import print_daily_eod_report
+        ending_balance = self.get_account_capital()
+        eod_msg, _ = print_daily_eod_report(
+            day_trades=day_trades,
+            initial_capital=self.config.INITIAL_CAPITAL,
+            ending_balance=ending_balance,
+            date_str=today_date
+        )
+        if day_trades:
+            notify_eod_summary(report_text=eod_msg, mode=self.mode, config=self.config)
+
+    def run_live_loop(self) -> None:
+        """Universal Macro/Micro live loop driver for both Paper and Live modes."""
+        print(f"       ENGINE: {STRATEGY_NAME} ({self.mode.upper()} TRADING)")
+        print(f"       Capital: Rs.{self.get_account_capital():,.0f} | Max Slots: {self.config.MAX_CONCURRENT_POSITIONS}")
+        print(f"       Scanning: 15m Candle Closes | Guardian: {self.config.POSITION_MONITOR_INTERVAL_SEC}s Ticks")
+        print("=======================================================")
+
+        self.authenticate()
+        self.sync_active_positions_from_db(mode=self.mode)
+
+        print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] 🚀 Live {self.mode.upper()} Engine started.")
+
+        try:
+            while True:
+                now = datetime.datetime.now()
+
+                if now.weekday() >= 5 or now.time() >= datetime.time(15, 30):
+                    next_sess, remaining_sec = self.get_next_market_session(now)
+                    print(f"[{now.strftime('%H:%M:%S')}] 💤 Market is closed (Weekend / Post-Market).")
+                    print(f"👉 Next session: {next_sess.strftime('%A %Y-%m-%d 09:15:00')} IST ({remaining_sec}s remaining).")
+                    if self.active_positions:
+                        self.squareoff_all_positions()
+                    self.generate_eod_report()
+                    break
+
+                if not self.is_market_open(now):
+                    wait_sec = self.get_seconds_until_market_open(now)
+                    target_time = (now + datetime.timedelta(seconds=wait_sec)).strftime('%H:%M:%S')
+                    print(f"[{now.strftime('%H:%M:%S')}] ⏳ Pre-market: Sleeping {wait_sec}s until market open at {target_time} IST...")
+                    time.sleep(wait_sec)
+                    continue
+
+                if not self.is_entry_window_active(now) and not self.active_positions and now.time() < datetime.time(10, 0):
+                    wait_sec = self.get_seconds_until_entry_window(now)
+                    target_time = (now + datetime.timedelta(seconds=wait_sec)).strftime('%H:%M:%S')
+                    print(f"[{now.strftime('%H:%M:%S')}] ⏳ Pre-entry: 0 active positions. Sleeping {wait_sec}s until entry window opens at {target_time} IST...")
+                    time.sleep(wait_sec)
+                    continue
+
+                if self.is_squareoff_time(now):
+                    if self.active_positions:
+                        self.squareoff_all_positions()
+                    self.generate_eod_report()
+                    print(f"[{now.strftime('%H:%M:%S')}] ✅ Trading session completed for today.")
+                    break
+
+                if self.is_entry_window_active(now):
+                    if len(self.active_positions) < self.config.MAX_CONCURRENT_POSITIONS:
+                        nifty_pct_map = self.get_benchmark_feed()
+                        self.scan_and_execute_signals(nifty_pct_map)
+
+                wait_sec = self.get_seconds_until_next_candle(interval_mins=15, now=now)
+                next_check = (now + datetime.timedelta(seconds=wait_sec)).strftime('%H:%M:%S')
+                print(f"[{now.strftime('%H:%M:%S')}] ⏳ Next 15m scan in {wait_sec}s ({next_check}). Active slots: {len(self.active_positions)}/{self.config.MAX_CONCURRENT_POSITIONS}")
+
+                poll_interval = self.config.POSITION_MONITOR_INTERVAL_SEC
+                target_wake_time = time.time() + wait_sec
+                prewarmed = False
+
+                while time.time() < target_wake_time:
+                    remaining_time = target_wake_time - time.time()
+                    if remaining_time <= 5.0 and not prewarmed and self.is_entry_window_active(datetime.datetime.now()):
+                        try:
+                            self.prewarm_benchmark_feed()
+                            prewarmed = True
+                        except Exception:
+                            pass
+
+                    sleep_chunk = min(poll_interval, remaining_time)
+                    if sleep_chunk > 0:
+                        time.sleep(sleep_chunk)
+
+                    if self.active_positions:
+                        self.monitor_active_positions()
+
+                    if self.is_squareoff_time(datetime.datetime.now()):
+                        break
+
+        except KeyboardInterrupt:
+            print(f"[INTERRUPT] User interrupted {self.mode.upper()} engine (Ctrl+C). Generating report...")
+            self.generate_eod_report()
+
+    # --- Abstract Hooks to be implemented by child classes ---
+    def execute_entry(self, symbol: str, entry_price: float, sl_price: float, tp_price: float) -> bool:
+        raise NotImplementedError
+
+    def update_position(self, symbol: str, current_ltp: float, high: float, low: float, now: Optional[datetime.datetime] = None) -> Optional[Dict[str, Any]]:
+        raise NotImplementedError
+
+    def execute_squareoff(self, symbol: str, exit_price: float, reason: str) -> bool:
+        raise NotImplementedError

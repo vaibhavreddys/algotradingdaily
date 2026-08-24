@@ -14,7 +14,7 @@ import requests
 # pyrefly: ignore [missing-import]
 import yfinance as yf
 import pandas as pd
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Any, Tuple
 
 from data_pipeline.openalgo_ingestion import settings
 from data_pipeline.openalgo_ingestion.reader import BacktestDataReader
@@ -271,19 +271,104 @@ def fetch_stock_candles(
     )
 
 
+
+
+# -------------------------------------------------------------------------
+# Broker-Agnostic OpenAlgo Market Data Gateway
+# -------------------------------------------------------------------------
+
+def fetch_openalgo_tick_price(api_client: Any, symbol: str, exchange: str = "NSE") -> Optional[Dict[str, float]]:
+    """
+    Fetches real-time market tick (LTP, High, Low) through OpenAlgo Unified API.
+    Broker-agnostic across 24+ Indian brokers without broker-specific token mappings.
+    """
+    if api_client is None:
+        return None
+
+    clean_sym = symbol.replace('.NS', '').replace('-EQ', '')
+    try:
+        # Check OpenAlgo quotes method (get_quotes or quotes)
+        quotes_fn = getattr(api_client, 'get_quotes', None) or getattr(api_client, 'quotes', None)
+        if quotes_fn:
+            res = quotes_fn(symbol=clean_sym, exchange=exchange)
+            if res and isinstance(res, dict) and res.get('status') == 'success':
+                data = res.get('data', res)
+                ltp = float(data.get('ltp', data.get('last_price', 0.0)))
+                h = float(data.get('high', ltp))
+                l = float(data.get('low', ltp))
+                if ltp > 0:
+                    return {'ltp': ltp, 'high': h, 'low': l}
+
+        # Fallback to get_ltp
+        ltp_fn = getattr(api_client, 'get_ltp', None)
+        if ltp_fn:
+            res = ltp_fn(symbol=clean_sym, exchange=exchange)
+            if res and isinstance(res, dict) and res.get('status') == 'success':
+                ltp = float(res.get('data', {}).get('ltp', 0.0))
+                if ltp > 0:
+                    return {'ltp': ltp, 'high': ltp, 'low': ltp}
+    except Exception:
+        pass
+    return None
+
+
+def fetch_openalgo_candles(
+    api_client: Any,
+    symbol: str,
+    interval: str = "15m",
+    exchange: str = "NSE",
+    days: int = 5
+) -> Optional[pd.DataFrame]:
+    """
+    Fetches intraday historical candle bars via OpenAlgo historical data gateway.
+    """
+    if api_client is None:
+        return None
+
+    clean_sym = symbol.replace('.NS', '').replace('-EQ', '')
+    try:
+        hist_fn = getattr(api_client, 'history', None)
+        if hist_fn:
+            res = hist_fn(symbol=clean_sym, exchange=exchange, interval=interval)
+            if res and isinstance(res, dict) and res.get('status') == 'success':
+                bars = res.get('data', [])
+                if bars and len(bars) >= 20:
+                    df = pd.DataFrame(bars)
+                    df.rename(columns={'time': 'timestamp', 'open': 'Open', 'high': 'High', 'low': 'Low', 'close': 'Close', 'volume': 'Volume'}, inplace=True)
+                    df['timestamp'] = pd.to_datetime(df['timestamp'])
+                    df.sort_values('timestamp', inplace=True)
+                    df.reset_index(drop=True, inplace=True)
+                    return df
+    except Exception:
+        pass
+    return None
+
+
 def fetch_verified_candles(
     ticker: str,
     period: str = "5d",
     interval: str = "15m",
     retry_delays: tuple = (0, 3, 5, 7),
     verbose: bool = False,
+    api_client: Optional[Any] = None,
 ) -> Optional[pd.DataFrame]:
     """
-    Ingests live candle data with resilient multi-attempt retry (0s, 3s, 5s, 7s)
-    to handle public CDN propagation lag at exact candle boundaries.
-    Silences noisy download logs by default during live scanning.
+    Ingests live candle data with resilient multi-attempt retry (0s, 3s, 5s, 7s).
+    - Tier 1: Real-time OpenAlgo Gateway (if api_client provided & authenticated).
+    - Tier 2: Resilient historical/live local fallback pipeline.
     """
     import time
+
+    # Tier 1: OpenAlgo Unified Live Feed
+    if api_client is not None:
+        try:
+            b_df = fetch_openalgo_candles(api_client, ticker, interval=interval)
+            if b_df is not None and not b_df.empty and len(b_df) >= 30:
+                return b_df
+        except Exception:
+            pass
+
+    # Tier 2: Fallback Feed
     for delay in retry_delays:
         if delay > 0:
             time.sleep(delay)
@@ -296,14 +381,23 @@ def fetch_verified_candles(
     return None
 
 
-def fetch_latest_tick_price(ticker: str) -> Optional[Dict[str, float]]:
+def fetch_latest_tick_price(ticker: str, api_client: Optional[Any] = None) -> Optional[Dict[str, float]]:
     """
     Fetches latest live candle tick (Close, High, Low) for an active position.
-    Uses period='1d' with interval='1m' (or '5m' fallback) without local caching.
-    Returns a dict with {'ltp': float, 'high': float, 'low': float} or None on error.
+    - Tier 1: Native OpenAlgo Gateway (sub-second zero latency).
+    - Tier 2: 1m/5m live fallback candle feed.
     """
+    # Tier 1: OpenAlgo Live Quote
+    if api_client is not None:
+        try:
+            b_tick = fetch_openalgo_tick_price(api_client, ticker)
+            if b_tick is not None and b_tick.get('ltp', 0.0) > 0:
+                return b_tick
+        except Exception:
+            pass
+
+    # Tier 2: Fallback Feed
     try:
-        # Try 1m candle first for highest precision
         raw = yf.download(ticker, period="1d", interval="1m", progress=False)
         if raw is not None and not raw.empty and len(raw) > 0:
             if isinstance(raw.columns, pd.MultiIndex):
@@ -317,7 +411,6 @@ def fetch_latest_tick_price(ticker: str) -> Optional[Dict[str, float]]:
     except Exception:
         pass
 
-    # Fallback to 5m candle
     try:
         raw = yf.download(ticker, period="5d", interval="5m", progress=False)
         if raw is not None and not raw.empty and len(raw) > 0:

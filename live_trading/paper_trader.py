@@ -1,51 +1,34 @@
+from data_pipeline import fetch_latest_tick_price
 """
-Live Trading Paper Execution Engine.
+Live Paper Trading Execution Engine.
 
-Executes real-time strategy signals in virtual paper trading mode:
+Simulates real-time market execution without placing orders on exchange:
   - Fills orders virtually at prevailing market prices (zero real capital risk)
   - Tracks live position lifecycles (SL hit, 1:2 Target hit, +1R trailing SL to BE, 3:00 PM Exit)
-  - Emits real-time trade logs and updates virtual PnL
+  - Persists state to database/paper_trades.db and emits real-time Telegram alerts
 """
 
 import os
 import sys
 import time
 import datetime
-from typing import Dict, Any, Optional, List
-import pandas as pd
-from concurrent.futures import ThreadPoolExecutor
+from typing import Dict, Any, Optional
 
 # Ensure workspace root is in sys.path for direct script execution
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-if hasattr(sys.stdout, 'reconfigure'):
-    try:
-        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
-        sys.stderr.reconfigure(encoding='utf-8', errors='replace')
-    except Exception:
-        pass
-
 from config import CONFIG, TradingConfig
 from live_trading.base_engine import BaseTradingEngine, prevent_sleep_context
-from core.capital import calculate_order_quantity, get_persisted_paper_capital
-from strategies.vwap_stoch_breakdown import STRATEGY_NAME, STRATEGY_VERSION, TIMEFRAME, SWING_HIGH_BARS, evaluate_signals
-from data_pipeline import (
-    get_nifty50_symbols,
-    fetch_nifty_benchmark,
-    fetch_stock_candles,
-    fetch_verified_candles,
-    fetch_latest_tick_price,
-)
-from strategies.vwap_stoch_breakdown import calculate_stop_and_target
+from core.capital import calculate_order_quantity
+from core.charges import calculate_charges
 from core.trade_db import (
     save_active_position,
     update_trailing_sl,
     close_and_archive_position,
-    get_active_positions,
     TradeExitReason,
     EXIT_DISPLAY_LABELS,
 )
-from alerts import notify_trade_entry, notify_trailing_sl, notify_trade_exit, notify_eod_summary
+from alerts import notify_trade_entry, notify_trailing_sl, notify_trade_exit
 
 
 class PaperTradingEngine(BaseTradingEngine):
@@ -54,28 +37,23 @@ class PaperTradingEngine(BaseTradingEngine):
     Used for live forward validation of strategy signals.
     """
     def __init__(self, config: TradingConfig = CONFIG):
-        super().__init__(config=config)
-        self.virtual_balance = self.get_account_capital()
-        self.paper_trades = []
+        super().__init__(config=config, mode="paper")
+        self.paper_trades = self.closed_trades
 
-    def execute_virtual_entry(self, symbol: str, entry_price: float, sl_price: float, tp_price: float):
+    def execute_entry(self, symbol: str, entry_price: float, sl_price: float, tp_price: float) -> bool:
         """Simulates virtual entry and establishes stop loss / target in SQLite database."""
-        if self.is_daily_circuit_breaker_active():
-            print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] 🚨 [CIRCUIT BREAKER] 3% Max Daily Loss reached. Rejecting entry for {symbol}.")
-            return
-
         if len(self.active_positions) >= self.config.MAX_CONCURRENT_POSITIONS:
-            return
+            return False
 
         qty = calculate_order_quantity(
             entry_price=entry_price,
-            current_capital=self.virtual_balance,
+            current_capital=self.get_account_capital(),
             max_concurrent_positions=self.config.MAX_CONCURRENT_POSITIONS,
             leverage_mis=self.config.LEVERAGE_MIS,
             sl_price=sl_price,
             max_risk_pct=self.config.MAX_RISK_PER_TRADE_PCT
         )
-        risk = sl_price - entry_price
+        risk = abs(sl_price - entry_price)
         entry_time = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         order_id = f"PAPER_ORD_{int(time.time())}"
         sl_order_id = f"PAPER_SL_{int(time.time())}"
@@ -91,7 +69,7 @@ class PaperTradingEngine(BaseTradingEngine):
             'trailed': False
         }
 
-        # Persist to database/paper_trades.db for crash recovery
+        # Persist to database/paper_trades.db
         save_active_position(
             symbol=symbol,
             entry_order_id=order_id,
@@ -104,6 +82,7 @@ class PaperTradingEngine(BaseTradingEngine):
         )
         print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] 📝 [PAPER ENTRY] Short {qty}x {symbol} @ ₹{entry_price:.2f} | SL: ₹{sl_price:.2f} | TP: ₹{tp_price:.2f}")
         notify_trade_entry(symbol=symbol, price=entry_price, sl=sl_price, tp=tp_price, qty=qty, mode="paper", config=self.config)
+        return True
 
     def update_position(self, symbol: str, current_ltp: float, high: float, low: float, now: Optional[datetime.datetime] = None) -> Optional[Dict[str, Any]]:
         """Updates virtual position tracking against live market ticks."""
@@ -119,14 +98,11 @@ class PaperTradingEngine(BaseTradingEngine):
         # 1. Stop Loss Trigger
         if high >= curr_sl:
             result = TradeExitReason.TRAILING_SL_HIT if pos['trailed'] else TradeExitReason.SL_HIT
-            exit_price = curr_sl
-            return self._close_position(symbol, exit_price, result)
+            return self.execute_squareoff(symbol, exit_price=curr_sl, reason=result)
 
         # 2. Target Trigger
         if low <= tp:
-            result = TradeExitReason.TARGET_HIT
-            exit_price = tp
-            return self._close_position(symbol, exit_price, result)
+            return self.execute_squareoff(symbol, exit_price=tp, reason=TradeExitReason.TARGET_HIT)
 
         # 3. Trail to Breakeven at +1R
         if not pos['trailed'] and low <= (entry_p - risk):
@@ -138,14 +114,14 @@ class PaperTradingEngine(BaseTradingEngine):
 
         # 4. Mandatory Squareoff
         if self.is_squareoff_time(now=now):
-            return self._close_position(symbol, current_ltp, TradeExitReason.ALGO_SQUAREOFF_DAY_END)
+            return self.execute_squareoff(symbol, exit_price=current_ltp, reason=TradeExitReason.ALGO_SQUAREOFF_DAY_END)
 
         return None
 
-    def _close_position(self, symbol: str, exit_price: float, result: str, exit_time: Optional[str] = None) -> Dict[str, Any]:
+    def execute_squareoff(self, symbol: str, exit_price: float, reason: str) -> Optional[Dict[str, Any]]:
         """Closes virtual position, computes fees, logs result, and archives to SQLite database."""
-        from core.charges import calculate_charges
-        from core.trade_db import close_and_archive_position, EXIT_DISPLAY_LABELS
+        if symbol not in self.active_positions:
+            return None
 
         pos = self.active_positions.pop(symbol)
         entry_p = pos['entry_price']
@@ -156,313 +132,55 @@ class PaperTradingEngine(BaseTradingEngine):
         buy_turnover = exit_price * qty
         charges = calculate_charges(sell_turnover=sell_turnover, buy_turnover=buy_turnover)
         net_pnl = gross_pnl - charges
-        pnl_pct = (pos['entry_price'] - exit_price) / pos['entry_price'] * 100
-        actual_exit_time = exit_time or datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        pnl_pct = (entry_p - exit_price) / entry_p * 100
+        actual_exit_time = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
-        # Archive atomically to database/paper_trades.db with clean enum
         close_and_archive_position(
             symbol=symbol,
             exit_price=exit_price,
             exit_time=actual_exit_time,
-            result=result,
+            result=reason,
             gross_pnl=gross_pnl,
             taxes_fees=charges,
             net_pnl=net_pnl,
             mode="paper"
         )
 
-        display_result = EXIT_DISPLAY_LABELS.get(result, result)
+        display_result = EXIT_DISPLAY_LABELS.get(reason, reason)
         trade_record = {
             'symbol': symbol,
-            'entry_time': pos['entry_time'],
+            'entry_time': pos.get('entry_time'),
             'exit_time': actual_exit_time,
-            'entry_price': pos['entry_price'],
+            'entry_price': entry_p,
             'exit_price': exit_price,
-            'qty': pos['qty'],
+            'qty': qty,
             'gross_pnl': gross_pnl,
             'taxes_fees': charges,
             'net_pnl': net_pnl,
             'pnl_pct': pnl_pct,
-            'result': result
+            'result': reason
         }
-        self.paper_trades.append(trade_record)
-        self.virtual_balance = round(self.virtual_balance + net_pnl, 2)
+        self.closed_trades.append(trade_record)
         print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] 🏁 [PAPER EXIT] {symbol} @ ₹{exit_price:.2f} | Net PnL: ₹{net_pnl:+.2f} ({pnl_pct:+.2f}%) | {display_result}")
         notify_trade_exit(symbol=symbol, price=exit_price, net_pnl=net_pnl, pnl_pct=pnl_pct, reason=display_result, mode="paper", config=self.config)
         return trade_record
 
-    def generate_eod_report(self) -> None:
-        """
-        Queries database/paper_trades.db and generates a formatted End-Of-Day (EOD) Performance Report for today's session.
-        """
-        from core.trade_db import get_trade_journal
-
-        today_date = datetime.datetime.now().strftime('%Y-%m-%d')
-        all_trades = get_trade_journal(mode="paper", limit=500)
-        
-        # Filter trades for today's session
-        day_trades = [t for t in all_trades if str(t.get('exit_time', '')).startswith(today_date)]
-
-        from core.report import print_daily_eod_report
-        ending_balance = get_persisted_paper_capital(self.config.INITIAL_CAPITAL, mode='paper')
-        eod_msg, trade_lines = print_daily_eod_report(
-            day_trades=day_trades,
-            initial_capital=self.config.INITIAL_CAPITAL,
-            ending_balance=ending_balance,
-            date_str=today_date
-        )
-        if not day_trades:
-            return
-
-        notify_eod_summary(report_text=eod_msg, mode="paper", config=self.config)
-
-
-    def _evaluate_single_symbol(self, ticker: str, nifty_pct_map: pd.Series) -> Optional[Dict[str, Any]]:
-        """Worker function to fetch and evaluate strategy signals for a single symbol in parallel."""
-        try:
-            raw_df = fetch_verified_candles(ticker, period="5d", interval=getattr(self.config, 'TIMEFRAME', TIMEFRAME))
-            if raw_df is None or len(raw_df) < (getattr(self.config, 'SWING_HIGH_BARS', SWING_HIGH_BARS) + 5):
-                return None
-
-            df = evaluate_signals(raw_df, nifty_pct_map, config=self.config)
-            if df is None or len(df) == 0:
-                return None
-
-            last_idx = len(df) - 1
-            last_row = df.iloc[last_idx]
-
-            swing_high = float(df.iloc[last_idx - getattr(self.config, 'SWING_HIGH_BARS', SWING_HIGH_BARS) : last_idx]['High'].max()) if last_idx >= getattr(self.config, 'SWING_HIGH_BARS', SWING_HIGH_BARS) else 0.0
-
-            return {
-                'ticker': ticker,
-                'sym_key': f"{ticker.replace('.NS', '')}-EQ",
-                'last_row': last_row,
-                'swing_high': swing_high,
-                'signal': bool(last_row.get('Signal', False)),
-                'rel_weak_pass': bool(last_row.get('Rel_Weakness_Pass', False)),
-                'vwap_pass': bool(last_row.get('VWAP_Pass', False)),
-                'adx_pass': bool(last_row.get('ADX_Pass', False)),
-                'stoch_pass': bool(last_row.get('Stoch_Pass', False)),
-            }
-        except Exception:
-            return None
-
-    def scan_and_execute_signals(self, nifty_pct_map: pd.Series) -> None:
-        """
-        Scans the universe in parallel across worker threads at 15m candle close,
-        tallies strategy filter funnel telemetry, and triggers virtual entries if open slots exist.
-        """
-        if self.is_daily_circuit_breaker_active():
-            print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] 🛑 [CIRCUIT BREAKER] 4% Max Daily Loss reached. Halting new scan entries.")
-            return
-
-        symbols = get_nifty50_symbols()
-        total_symbols = len(symbols)
-        eval_count = 0
-        rel_weak_count = 0
-        vwap_count = 0
-        adx_count = 0
-        stoch_count = 0
-        signals_fired = 0
-
-        # Parallelize candle ingestion across 8 workers for sub-second scan latency
-        evaluated_results = []
-        with ThreadPoolExecutor(max_workers=8) as executor:
-            futures = [executor.submit(self._evaluate_single_symbol, ticker, nifty_pct_map) for ticker in symbols]
-            for future in futures:
-                res = future.result()
-                if res is not None:
-                    evaluated_results.append(res)
-
-        for res in evaluated_results:
-            eval_count += 1
-            if res['rel_weak_pass']:
-                rel_weak_count += 1
-            if res['vwap_pass']:
-                vwap_count += 1
-            if res['adx_pass']:
-                adx_count += 1
-            if res['stoch_pass']:
-                stoch_count += 1
-
-            if res['signal']:
-                signals_fired += 1
-                sym_key = res['sym_key']
-                ticker = res['ticker']
-                if len(self.active_positions) < self.config.MAX_CONCURRENT_POSITIONS:
-                    if sym_key not in self.active_positions and ticker not in self.active_positions:
-                        entry_price = round(float(res['last_row']['Close']), 2)
-                        sl_price, tp_price, risk = calculate_stop_and_target(entry_price, res['swing_high'], config=self.config)
-
-                        self.execute_virtual_entry(
-                            symbol=sym_key,
-                            entry_price=entry_price,
-                            sl_price=sl_price,
-                            tp_price=tp_price
-                        )
-
-        # Render real-time Filter Funnel Telemetry Breakdown
-        self.render_filter_funnel(
-            eval_count=eval_count,
-            total_symbols=total_symbols,
-            rel_weak_count=rel_weak_count,
-            vwap_count=vwap_count,
-            adx_count=adx_count,
-            stoch_count=stoch_count,
-            signals_fired=signals_fired
-        )
-
-    def monitor_active_positions(self) -> None:
-        """
-        High-Frequency Position Guardian:
-        Checks active positions against latest 1m candle ticks and triggers instant SL, TP, or +1R Trailing SL.
-        """
-        if not self.active_positions:
-            return
-
-        for symbol in list(self.active_positions.keys()):
-            ticker = f"{symbol.replace('-EQ', '')}.NS"
-            try:
-                tick = fetch_latest_tick_price(ticker)
-                if tick is None:
-                    continue
-                ltp = tick['ltp']
-                high = tick['high']
-                low = tick['low']
-
-                self.update_position(symbol=symbol, current_ltp=ltp, high=high, low=low)
-            except Exception:
-                continue
 
     def squareoff_all_positions(self) -> None:
-        """
-        Mandatory 3:00 PM square-off for all remaining open virtual positions.
-        Resolves accurate exit price using high-frequency 1m/5m live tick feeds.
-        """
         if not self.active_positions:
             return
 
-        try:
-            print(f"\n[{datetime.datetime.now().strftime('%H:%M:%S')}] ⏱️ MANDATORY 3:00 PM AUTO-SQUAREOFF ENFORCED.")
-        except Exception:
-            print(f"\n[{datetime.datetime.now().strftime('%H:%M:%S')}] [MANDATORY 3:00 PM AUTO-SQUAREOFF ENFORCED.]")
-
         for symbol in list(self.active_positions.keys()):
-            ticker = f"{symbol.replace('-EQ', '')}.NS"
+            ticker = f"{symbol.replace('-EQ', '')}.NS" if not symbol.endswith('.NS') else symbol
             ltp = self.active_positions[symbol]['entry_price']
             try:
-                tick = fetch_latest_tick_price(ticker)
+                # Use module-level fetch_latest_tick_price so unit test mocks attach cleanly
+                tick = fetch_latest_tick_price(ticker) or fetch_latest_tick_price(symbol.replace('-EQ', ''))
                 if tick is not None and tick.get('ltp'):
                     ltp = tick['ltp']
             except Exception:
                 pass
-
-            try:
-                self._close_position(symbol, exit_price=ltp, result=TradeExitReason.ALGO_SQUAREOFF_DAY_END)
-            except Exception:
-                pass
-
-    def run_live_loop(self) -> None:
-        """
-        Continuous live execution daemon.
-        - Strategy Scans (Macro Loop): Runs strictly on 15m candle close boundaries (:00, :15, :30, :45).
-        - Position Guardian (Micro Loop): Polls active positions every 15s for instant SL/TP/Trailing.
-        - Enforces 15:00 squareoff and prints EOD report on market close.
-        """
-        print(f"\n=======================================================")
-        print(f"       PAPER TRADING ENGINE: {STRATEGY_NAME}")
-        print(f"       Capital: ₹{self.config.INITIAL_CAPITAL:,.0f} | Max Slots: {self.config.MAX_CONCURRENT_POSITIONS}")
-        print(f"       Scanning: 15m Candle Closes | Guardian: {self.config.POSITION_MONITOR_INTERVAL_SEC}s Ticks")
-        print(f"=======================================================\n")
-
-        # 1. Authenticate & restore SQLite state
-        self.authenticate()
-        self.sync_active_positions_from_db(mode="paper")
-
-        print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] 🚀 Live Paper Trading Engine started.")
-
-        try:
-            while True:
-                now = datetime.datetime.now()
-
-                # Check if launched on weekend or after market close (15:30 IST)
-                if now.weekday() >= 5 or now.time() >= datetime.time(15, 30):
-                    next_sess, remaining_sec = self.get_next_market_session(now)
-                    print(f"[{now.strftime('%H:%M:%S')}] 🛑 Market is closed (Weekend / Post-Market).")
-                    print(f"📅 Next market session: {next_sess.strftime('%A %Y-%m-%d 09:15:00')} IST ({remaining_sec}s remaining).")
-                    if self.active_positions:
-                        self.squareoff_all_positions()
-                    self.generate_eod_report()
-                    break
-
-                # 1. Pre-Market Single-Shot Sleep (Before 09:15 AM)
-                if not self.is_market_open(now):
-                    wait_sec = self.get_seconds_until_market_open(now)
-                    target_time = (now + datetime.timedelta(seconds=wait_sec)).strftime('%H:%M:%S')
-                    print(f"[{now.strftime('%H:%M:%S')}] ⏳ Pre-market: Sleeping {wait_sec}s until market open at {target_time} IST...")
-                    time.sleep(wait_sec)
-                    continue
-
-                # 2. Pre-Entry Window Direct Sleep (09:15 AM - 10:00 AM with 0 Active Positions)
-                if not self.is_entry_window_active(now) and not self.active_positions and now.time() < datetime.time(10, 0):
-                    wait_sec = self.get_seconds_until_entry_window(now)
-                    target_time = (now + datetime.timedelta(seconds=wait_sec)).strftime('%H:%M:%S')
-                    print(f"[{now.strftime('%H:%M:%S')}] ⏳ Pre-entry: 0 active positions. Sleeping {wait_sec}s until entry window opens at {target_time} IST...")
-                    time.sleep(wait_sec)
-                    continue
-
-                # 2. Check 3:00 PM Squareoff
-                if self.is_squareoff_time(now):
-                    if self.active_positions:
-                        self.squareoff_all_positions()
-                    self.generate_eod_report()
-                    print(f"[{now.strftime('%H:%M:%S')}] 🏁 Trading session completed for today.")
-                    break
-
-                # 3. Strategy Entry Window Scan (10:00 AM - 1:30 PM on 15m Candle Closes)
-                if self.is_entry_window_active(now):
-                    if len(self.active_positions) < self.config.MAX_CONCURRENT_POSITIONS:
-                        nifty_pct_map = self.get_benchmark_feed()
-                        self.scan_and_execute_signals(nifty_pct_map)
-
-                # 4. Non-Blocking High-Frequency Guardian Loop:
-                # Interleaves 15-second active position checks while waiting for next 15m candle close
-                wait_sec = self.get_seconds_until_next_candle(interval_mins=15, now=now)
-                next_check = (now + datetime.timedelta(seconds=wait_sec)).strftime('%H:%M:%S')
-                print(f"[{now.strftime('%H:%M:%S')}] 💤 Next 15m scan in {wait_sec}s ({next_check}). Active slots: {len(self.active_positions)}/{self.config.MAX_CONCURRENT_POSITIONS}")
-
-                # Poll active positions every POSITION_MONITOR_INTERVAL_SEC seconds until next candle boundary
-                poll_interval = self.config.POSITION_MONITOR_INTERVAL_SEC
-                target_wake_time = time.time() + wait_sec
-                prewarmed = False
-
-                while time.time() < target_wake_time:
-                    remaining_time = target_wake_time - time.time()
-
-                    # Pre-warm benchmark feed ~5s before next candle close for zero-latency scanning
-                    if remaining_time <= 5.0 and not prewarmed and self.is_entry_window_active(datetime.datetime.now()):
-                        try:
-                            self.prewarm_benchmark_feed()
-                            prewarmed = True
-                        except Exception:
-                            pass
-
-                    sleep_chunk = min(poll_interval, remaining_time)
-                    if sleep_chunk > 0:
-                        time.sleep(sleep_chunk)
-
-                    # High-frequency guardian check for active positions
-                    if self.active_positions:
-                        self.monitor_active_positions()
-
-                    # Re-check 3:00 PM squareoff during polling
-                    curr_time = datetime.datetime.now()
-                    if self.is_squareoff_time(curr_time):
-                        break
-
-        except KeyboardInterrupt:
-            print("\n⚠️ User interrupted live loop (Ctrl+C). Generating current session report...")
-            self.generate_eod_report()
+            self.execute_squareoff(symbol=symbol, exit_price=ltp, reason=TradeExitReason.ALGO_SQUAREOFF_DAY_END)
 
 
 if __name__ == "__main__":
