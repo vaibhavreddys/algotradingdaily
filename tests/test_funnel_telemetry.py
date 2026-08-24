@@ -42,8 +42,18 @@ class TestFunnelTelemetry(unittest.TestCase):
         self.assertIn("Qualified Entries Fired    :  1 trade(s) | Open Slots: 0/2", output)
 
     def test_sub_filter_boolean_flags_present(self):
-        nifty = fetch_nifty_benchmark(self.config)
-        df = load_candle_data('TCS.NS', self.config)
+        import numpy as np
+        import datetime
+        dates = pd.date_range(end=datetime.datetime.now(), periods=100, freq='15min')
+        nifty = pd.Series(0.01, index=dates)
+        df = pd.DataFrame({
+            'timestamp': dates,
+            'Open': np.linspace(100, 90, 100),
+            'High': np.linspace(102, 92, 100),
+            'Low': np.linspace(98, 88, 100),
+            'Close': np.linspace(99, 89, 100),
+            'Volume': [50000.0] * 100
+        })
         res = evaluate_signals(df, nifty_pct_map=nifty, config=self.config)
         self.assertIsNotNone(res)
         self.assertIn('Rel_Weakness_Pass', res.columns)
