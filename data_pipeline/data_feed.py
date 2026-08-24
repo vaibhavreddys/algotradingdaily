@@ -360,12 +360,21 @@ def fetch_openalgo_candles(
 
 def fetch_verified_candles(
     ticker: str,
-    period: str = "5d",
-    interval: str = "15m",
+    period: Any = "5d",
+    interval: Any = "15m",
     retry_delays: tuple = (0, 3, 5, 7),
     verbose: bool = False,
     api_client: Optional[Any] = None,
+    **kwargs
 ) -> Optional[pd.DataFrame]:
+    if hasattr(period, 'TIMEFRAME'):
+        interval = getattr(period, 'TIMEFRAME', interval)
+        period = "5d"
+    elif not isinstance(period, str):
+        period = "5d"
+    if not isinstance(interval, str):
+        interval = "15m"
+
     """
     Ingests live candle data with resilient multi-attempt retry (0s, 3s, 5s, 7s).
     - Tier 1: Real-time OpenAlgo Gateway (if api_client provided & authenticated).
