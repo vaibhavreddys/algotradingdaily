@@ -4,6 +4,7 @@ Zero-dependency server (stdlib + duckdb) serving a single-page chart UI.
 Run: python visualizer/server.py [--port 8501] [--no-browser]
 """
 from __future__ import annotations
+import pandas as pd
 
 import argparse
 import datetime as dt
@@ -68,7 +69,7 @@ def run_backtest_api(payload: dict) -> dict:
     version_mod = payload.get("version", "v1_0")
     timeframe = payload.get("timeframe", "15m")
     universe = payload.get("universe", "ALL")
-    raw_capital = payload.get("capital", 10000)
+    raw_capital = payload.get("capital", 100000)
     try:
         capital = float(raw_capital)
         if capital <= 0:
@@ -104,57 +105,108 @@ def run_backtest_api(payload: dict) -> dict:
             "version": strategy.VERSION,
             "universe": universe,
             "trades_count": 0,
-            "initial_capital": capital,
-            "ending_capital": capital,
+            "wins_count": 0,
+            "losses_count": 0,
+            "win_rate_pct": 0.0,
+            "gross_pnl": 0.0,
+            "total_charges": 0.0,
             "net_pnl": 0.0,
             "net_roi_pct": 0.0,
-            "win_rate_pct": 0.0,
             "profit_factor": 0.0,
             "max_drawdown": 0.0,
             "max_drawdown_pct": 0.0,
+            "max_runup": 0.0,
+            "max_runup_pct": 0.0,
+            "max_win_streak": 0,
+            "max_loss_streak": 0,
+            "largest_win": 0.0,
+            "largest_loss": 0.0,
+            "trade_expectancy": 0.0,
+            "avg_win": 0.0,
+            "avg_loss": 0.0,
+            "start_date": "-",
+            "end_date": "-",
+            "trading_days": 0,
+            "initial_capital": capital,
+            "ending_capital": capital,
             "equity_curve": [],
             "trades": [],
+            "monthly_breakdown": [],
             "broker_comparison": []
         }
 
-    # Calculate Core Performance Metrics (100% aligned with core/report.py & portfolio_sim.py)
+    # Calculate Core Quantitative Metrics (100% aligned with core/report.py & portfolio_sim.py)
     total_trades = len(tdf)
-    winning_trades = int((tdf['PnL %'] > 0).sum())
-    win_rate = round((winning_trades / total_trades) * 100, 2)
+    win_count = int((tdf['PnL %'] > 0).sum())
+    loss_count = int((tdf['PnL %'] <= 0).sum())
+    win_rate = round((win_count / total_trades) * 100, 2)
+    
+    gross_gains = float(tdf.loc[tdf['Gross PnL (₹)'] > 0, 'Gross PnL (₹)'].sum())
+    gross_losses = abs(float(tdf.loc[tdf['Gross PnL (₹)'] <= 0, 'Gross PnL (₹)'].sum()))
     gross_pnl = float(tdf['Gross PnL (₹)'].sum())
     net_pnl = float(ending_capital - capital)
     net_roi = round((net_pnl / capital) * 100, 2)
     
-    gross_wins = tdf.loc[tdf['Gross PnL (₹)'] > 0, 'Gross PnL (₹)'].sum()
-    gross_losses = abs(tdf.loc[tdf['Gross PnL (₹)'] < 0, 'Gross PnL (₹)'].sum())
-    profit_factor = round(gross_wins / gross_losses, 2) if gross_losses > 0 else 999.0
+    profit_factor = round(gross_gains / gross_losses, 2) if gross_losses > 0 else 999.0
 
-    # Equity curve & Max Drawdown
-    equity_series = tdf['Capital'].tolist()
-    peak = capital
-    max_dd = 0.0
-    max_dd_pct = 0.0
+    # Max Drawdown
+    running_peak = tdf['Capital'].cummax()
+    drawdown_series = tdf['Capital'] - running_peak
+    mdd_val = float(abs(drawdown_series.min())) if not drawdown_series.empty else 0.0
+    trough_idx = drawdown_series.idxmin() if not drawdown_series.empty else 0
+    peak_at_trough = float(running_peak.loc[trough_idx]) if not drawdown_series.empty else capital
+    mdd_pct = round((mdd_val / peak_at_trough) * 100, 2) if peak_at_trough > 0 else 0.0
+
+    # Max Equity Runup
+    running_trough = tdf['Capital'].cummin() if not tdf.empty else pd.Series([capital])
+    runup_series = tdf['Capital'] - running_trough if not tdf.empty else pd.Series([0.0])
+    max_runup_val = float(runup_series.max()) if not runup_series.empty else 0.0
+    max_runup_pct = round((max_runup_val / capital) * 100, 2)
+
+    # Streaks & Averages
+    largest_win = float(tdf['Net PnL (₹)'].max()) if not tdf.empty else 0.0
+    largest_loss = float(tdf['Net PnL (₹)'].min()) if not tdf.empty else 0.0
+    expectancy = round(net_pnl / total_trades, 2) if total_trades > 0 else 0.0
+    avg_win = round(gross_gains / win_count, 2) if win_count > 0 else 0.0
+    avg_loss = round(gross_losses / loss_count, 2) if loss_count > 0 else 0.0
+
+    cur_win_streak = 0
+    max_win_streak = 0
+    cur_loss_streak = 0
+    max_loss_streak = 0
+    for pnl in tdf['Net PnL (₹)']:
+        if pnl > 0:
+            cur_win_streak += 1
+            cur_loss_streak = 0
+            if cur_win_streak > max_win_streak:
+                max_win_streak = cur_win_streak
+        else:
+            cur_loss_streak += 1
+            cur_win_streak = 0
+            if cur_loss_streak > max_loss_streak:
+                max_loss_streak = cur_loss_streak
+
+    # Date range and trading days
+    start_date = pd.to_datetime(tdf['Entry Time']).min().strftime('%Y-%m-%d')
+    end_date = pd.to_datetime(tdf['Exit Time']).max().strftime('%Y-%m-%d')
+    trading_days = len(pd.to_datetime(tdf['Entry Time']).dt.date.unique())
+
+    # Equity curve
     equity_curve = [{"time": "Start", "equity": capital}]
-    
     for idx, row in tdf.iterrows():
-        cap = float(row['Capital'])
-        if cap > peak:
-            peak = cap
-        dd = peak - cap
-        dd_pct = (dd / peak) * 100 if peak > 0 else 0
-        if dd > max_dd:
-            max_dd = dd
-            max_dd_pct = dd_pct
         equity_curve.append({
             "time": str(row['Exit Time']),
             "symbol": row['Symbol'],
-            "equity": round(cap, 2),
+            "equity": round(float(row['Capital']), 2),
             "pnl": round(float(row['Net PnL (₹)']), 2)
         })
 
     # Multi-broker breakdown
     from core.charges import calculate_charges, BROKER_CHARGES_CONFIG
-    
+    from core.report import calculate_monthly_breakdown
+
+    monthly_breakdown = calculate_monthly_breakdown(tdf, capital)
+
     broker_comparison = []
     for b_key, b_cfg in BROKER_CHARGES_CONFIG.items():
         b_name = b_cfg.get("name", b_key)
@@ -175,7 +227,7 @@ def run_backtest_api(payload: dict) -> dict:
             "roi_pct": round((b_net / capital) * 100, 2)
         })
 
-    # Convert trades table
+    # Convert trades table (last 100 trades for UI display)
     trades_log = []
     for _, r in tdf.tail(100).iterrows():
         trades_log.append({
@@ -194,19 +246,34 @@ def run_backtest_api(payload: dict) -> dict:
         "version": strategy.VERSION,
         "universe": universe,
         "trades_count": total_trades,
-        "initial_capital": capital,
-        "ending_capital": round(ending_capital, 2),
+        "wins_count": win_count,
+        "losses_count": loss_count,
+        "win_rate_pct": win_rate,
         "gross_pnl": round(gross_pnl, 2),
-        "total_taxes_fees": round(gross_pnl - net_pnl, 2),
+        "total_charges": round(total_charges, 2),
         "net_pnl": round(net_pnl, 2),
         "net_roi_pct": net_roi,
-        "win_rate_pct": win_rate,
         "profit_factor": profit_factor,
-        "max_drawdown": round(max_dd, 2),
-        "max_drawdown_pct": round(max_dd_pct, 2),
+        "max_drawdown": round(mdd_val, 2),
+        "max_drawdown_pct": mdd_pct,
+        "max_runup": round(max_runup_val, 2),
+        "max_runup_pct": max_runup_pct,
+        "max_win_streak": max_win_streak,
+        "max_loss_streak": max_loss_streak,
+        "largest_win": round(largest_win, 2),
+        "largest_loss": round(largest_loss, 2),
+        "trade_expectancy": expectancy,
+        "avg_win": avg_win,
+        "avg_loss": avg_loss,
+        "start_date": start_date,
+        "end_date": end_date,
+        "trading_days": trading_days,
+        "initial_capital": capital,
+        "ending_capital": round(ending_capital, 2),
+        "monthly_breakdown": monthly_breakdown,
+        "broker_comparison": broker_comparison,
         "equity_curve": equity_curve,
-        "trades": trades_log,
-        "broker_comparison": broker_comparison
+        "trades": trades_log
     }
 
 

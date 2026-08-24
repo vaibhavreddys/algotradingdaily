@@ -29,6 +29,92 @@ def format_outcome_distribution(counts_series_or_dict: Any, total_trades: int) -
     return "\n".join(lines)
 
 
+
+
+def calculate_monthly_breakdown(tdf: pd.DataFrame, initial_capital: float) -> list:
+    """
+    Computes chronological monthly performance statistics from simulated trade logs.
+    """
+    if tdf.empty or 'Entry Time' not in tdf.columns:
+        return []
+
+    tdf_calc = tdf.copy()
+    tdf_calc['Entry_DT'] = pd.to_datetime(tdf_calc['Entry Time'])
+    tdf_calc['YearMonth'] = tdf_calc['Entry_DT'].dt.to_period('M')
+
+    monthly_stats = []
+    for ym, group in tdf_calc.groupby('YearMonth', sort=True):
+        trades_count = len(group)
+        win_count = int((group['PnL %'] > 0).sum())
+        loss_count = int((group['PnL %'] <= 0).sum())
+        win_rate = (win_count / trades_count) * 100 if trades_count > 0 else 0.0
+
+        gross_pnl = float(group['Gross PnL (₹)'].sum()) if 'Gross PnL (₹)' in group.columns else 0.0
+        net_pnl = float(group['Net PnL (₹)'].sum()) if 'Net PnL (₹)' in group.columns else 0.0
+        taxes_fees = gross_pnl - net_pnl
+
+        # Calculate monthly ROI based on starting capital base
+        roi_pct = (net_pnl / initial_capital) * 100 if initial_capital > 0 else 0.0
+        
+        # Month string format e.g. "Oct 2025"
+        month_label = ym.strftime('%b %Y')
+
+        monthly_stats.append({
+            'month': month_label,
+            'period': str(ym),
+            'trades': trades_count,
+            'wins': win_count,
+            'losses': loss_count,
+            'win_rate': round(win_rate, 2),
+            'gross_pnl': round(gross_pnl, 2),
+            'taxes_fees': round(taxes_fees, 2),
+            'net_pnl': round(net_pnl, 2),
+            'roi_pct': round(roi_pct, 2)
+        })
+
+    return monthly_stats
+
+
+def print_monthly_breakdown(tdf: pd.DataFrame, initial_capital: float) -> None:
+    """
+    Renders formatted ASCII table of month-wise portfolio performance.
+    """
+    monthly_data = calculate_monthly_breakdown(tdf, initial_capital)
+    if not monthly_data:
+        return
+
+    print("\n=============================================================================")
+    print("             MONTHLY PERFORMANCE BREAKDOWN (SHOONYA BASELINE)                ")
+    print("=============================================================================")
+    print(f"{'Month':<10} | {'Trades':<7} | {'Win Rate':<9} | {'Gross PnL':<14} | {'Taxes/Fees':<12} | {'Net PnL':<14} | {'ROI %':<10}")
+    print("-----------------------------------------------------------------------------")
+
+    tot_trades = 0
+    tot_gross = 0.0
+    tot_fees = 0.0
+    tot_net = 0.0
+
+    for m in monthly_data:
+        tot_trades += m['trades']
+        tot_gross += m['gross_pnl']
+        tot_fees += m['taxes_fees']
+        tot_net += m['net_pnl']
+
+        g_sign = "+" if m['gross_pnl'] >= 0 else "-"
+        n_sign = "+" if m['net_pnl'] >= 0 else "-"
+        roi_sign = "+" if m['roi_pct'] >= 0 else ""
+
+        print(f"{m['month']:<10} | {m['trades']:<7} | {m['win_rate']:>7.1f}% | {g_sign}₹{abs(m['gross_pnl']):>11,.2f} | ₹{m['taxes_fees']:>10,.2f} | {n_sign}₹{abs(m['net_pnl']):>11,.2f} | {roi_sign}{m['roi_pct']:>9.2f}%")
+
+    tot_roi = (tot_net / initial_capital) * 100 if initial_capital > 0 else 0.0
+    tot_g_sign = "+" if tot_gross >= 0 else "-"
+    tot_n_sign = "+" if tot_net >= 0 else "-"
+    tot_roi_sign = "+" if tot_roi >= 0 else ""
+
+    print("-----------------------------------------------------------------------------")
+    print(f"{'TOTAL':<10} | {tot_trades:<7} | {'-':>8} | {tot_g_sign}₹{abs(tot_gross):>11,.2f} | ₹{tot_fees:>10,.2f} | {tot_n_sign}₹{abs(tot_net):>11,.2f} | {tot_roi_sign}{tot_roi:>9.2f}%")
+    print("=============================================================================\n")
+
 def print_simulation_report(
     tdf: pd.DataFrame,
     ending_capital: float,
@@ -143,6 +229,7 @@ def print_simulation_report(
     print(f"Avg Win / Avg Loss     : +₹{avg_win:,.2f} / -₹{avg_loss:,.2f}")
     print("=======================================================\n")
     print(format_outcome_distribution(tdf['Result'].value_counts(), total_trades))
+    print_monthly_breakdown(tdf, initial_capital)
 
 
 def print_multi_broker_matrix(

@@ -1,230 +1,301 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>AlgoTradingDaily | Quantitative Backtest Studio</title>
-<style>
-  :root {
-    --bg: #131722; --panel: #1b1f2b; --panel2: #262b38;
-    --text: #d1d4dc; --muted: #787b86; --accent: #2962ff; --accent-hover: #3d75ff;
-    --up: #26a69a; --down: #ef5350; --border: #333846;
-  }
-  * { box-sizing: border-box; }
-  html, body { height: 100%; margin: 0; background: var(--bg); color: var(--text); font: 13px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; display: flex; flex-direction: column; overflow-x: hidden; }
+  <meta charset="UTF-8">
+  <title>Strategy Backtester & Performance Studio</title>
+  <style>
+    :root {
+      --bg: #12151c;
+      --panel: #1a1e29;
+      --panel2: #222736;
+      --border: #2a3143;
+      --text: #d1d4dc;
+      --muted: #787b86;
+      --accent: #2962ff;
+      --up: #26a69a;
+      --down: #ef5350;
+    }
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      min-height: 100vh;
+      box-sizing: border-box;
+    }
+    .top-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 20px;
+      background: var(--panel);
+      border-bottom: 1px solid var(--border);
+    }
+    .brand {
+      font-size: 16px;
+      font-weight: 800;
+      letter-spacing: 0.5px;
+      color: #fff;
+    }
+    .brand span { color: var(--accent); }
+    .nav-tabs { display: flex; gap: 8px; }
+    .nav-tab {
+      color: var(--muted);
+      text-decoration: none;
+      font-size: 13px;
+      padding: 6px 12px;
+      border-radius: 4px;
+      font-weight: 600;
+      transition: all 0.2s;
+    }
+    .nav-tab:hover { color: #fff; background: var(--panel2); }
+    .nav-tab.active { color: #fff; background: var(--accent); }
 
-  /* Top Navigation Bar */
-  .top-header {
-    display: flex; align-items: center; justify-content: space-between;
-    padding: 0 16px; height: 48px; background: #181c27; border-bottom: 1px solid var(--border);
-    flex-shrink: 0;
-  }
-  .brand { font-weight: 800; font-size: 15px; letter-spacing: .3px; display: flex; align-items: center; gap: 8px; }
-  .brand span { color: var(--accent); }
-  .nav-tabs { display: flex; gap: 6px; }
-  .nav-tab {
-    padding: 6px 14px; font-weight: 600; color: var(--muted); cursor: pointer; border-radius: 6px; transition: .15s; font-size: 12.5px; text-decoration: none; display: flex; align-items: center;
-  }
-  .nav-tab:hover { color: var(--text); background: var(--panel2); }
-  .nav-tab.active { color: #fff; background: var(--accent); }
-  .status-pill { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--up); font-weight: 600; background: rgba(38,166,154,0.12); padding: 4px 10px; border-radius: 12px; border: 1px solid rgba(38,166,154,0.25); }
-  .status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--up); box-shadow: 0 0 8px var(--up); }
+    .main-container {
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+      box-sizing: border-box;
+      max-width: 1400px;
+      margin: 0 auto;
+      width: 100%;
+    }
 
-    /* Content */
-  .content-wrap { flex: 1; overflow-y: auto; padding: 20px; }
-  .page-container { max-width: 1400px; margin: 0 auto; width: 100%; display: flex; flex-direction: column; gap: 16px; }
-  
-  .dash-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; width: 100%; }
-  .dash-card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 14px 18px; }
-  .dash-title { font-size: 11px; font-weight: 700; color: var(--muted); text-transform: uppercase; }
-  .dash-val { font-size: 22px; font-weight: 800; color: #fff; margin-top: 4px; }
-  .dash-sub { font-size: 11.5px; color: var(--muted); margin-top: 2px; }
+    /* Form Bar */
+    .backtest-ctrls {
+      display: grid;
+      grid-template-columns: 1.4fr 0.9fr 0.9fr 1.1fr 1fr 1.3fr;
+      gap: 20px;
+      align-items: center;
+      background: var(--panel);
+      padding: 14px 20px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+    }
+    .ctrl-item { display: flex; flex-direction: column; gap: 6px; text-align: center; align-items: center; }
+    .ctrl-item label { font-size: 11.5px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.3px; }
+    .ctrl-item select, .ctrl-item input {
+      background: var(--panel2);
+      border: 1px solid var(--border);
+      color: #fff;
+      padding: 8px 12px;
+      border-radius: 4px;
+      font-size: 13px;
+      outline: none;
+      width: 100%;
+      box-sizing: border-box;
+      text-align: center;
+    }
+    .btn-run {
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      padding: 9px 18px;
+      border-radius: 4px;
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      height: 38px;
+      margin-top: 18px;
+      transition: background 0.2s;
+    }
+    .btn-run:hover { background: #1e4bd8; }
 
-  .backtest-ctrls {
-    display: grid;
-    grid-template-columns: 1.4fr 0.9fr 0.9fr 1.1fr 1fr 1.3fr;
-    gap: 20px;
-    align-items: flex-end;
-    padding: 20px 28px;
-    background: var(--panel);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    width: 100%;
-    box-sizing: border-box;
-  }
-  .ctrl-group { display: flex; flex-direction: column; gap: 8px; width: 100%; }
-  .ctrl-label { font-size: 11px; font-weight: 700; color: var(--muted); text-transform: uppercase; text-align: center; width: 100%; letter-spacing: .5px; }
-  .ctrl-group select, .ctrl-group input {
-    background: var(--panel2); color: var(--text); border: 1px solid var(--border);
-    border-radius: 7px; padding: 8px 12px; font-size: 13px; outline: none; transition: .15s; width: 100%; box-sizing: border-box; text-align: center; text-align-last: center;
-  }
-  .ctrl-group select:focus, .ctrl-group input:focus { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(41,98,255,0.2); }
-  button.primary-btn {
-    background: var(--accent); border: 1px solid var(--accent); color: #fff;
-    font-weight: 700; padding: 8px 16px; border-radius: 7px; cursor: pointer;
-    font-size: 13.5px; height: 38px; display: flex; align-items: center; justify-content: center; gap: 6px; width: 100%; box-sizing: border-box;
-  }
-  button.primary-btn:hover { filter: brightness(1.15); }
-  button.primary-btn:disabled { opacity: 0.5; cursor: wait; }
-  button.primary-btn:hover { filter: brightness(1.15); }
-  button.primary-btn:disabled { opacity: 0.5; cursor: wait; }
+    /* KPI Row */
+    .kpi-row { display: grid; grid-template-columns: repeat(6, 1fr); gap: 12px; width: 100%; box-sizing: border-box; }
+    .kpi-card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 12px 10px; text-align: center; display: flex; flex-direction: column; justify-content: center; min-height: 72px; }
+    .kpi-title { font-size: 11px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.3px; }
+    .kpi-val { font-size: 18px; font-weight: 800; margin-top: 3px; }
+    .kpi-sub { font-size: 11px; color: var(--muted); margin-top: 2px; font-weight: 500; }
+    .kpi-val.pos { color: var(--up); }
+    .kpi-val.neg { color: var(--down); }
 
-  .kpi-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 14px; width: 100%; }
-  .kpi-card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 14px; text-align: center; }
-  .kpi-title { font-size: 11.5px; font-weight: 600; color: var(--muted); }
-  .kpi-val { font-size: 20px; font-weight: 800; margin-top: 4px; }
-  .kpi-val.pos { color: var(--up); }
-  .kpi-val.neg { color: var(--down); }
+    .badge-month-pos { background: rgba(38,166,154,0.15); color: var(--up); padding: 3px 8px; border-radius: 4px; font-weight: 700; }
+    .badge-month-neg { background: rgba(239,83,80,0.15); color: var(--down); padding: 3px 8px; border-radius: 4px; font-weight: 700; }
 
-  .table-box { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 18px 20px; width: 100%; box-sizing: border-box; overflow-x: auto; }
-  .table-box h3 { margin: 0 0 14px 0; font-size: 14px; font-weight: 700; color: #fff; display: flex; align-items: center; gap: 8px; }
-  table.grid-table { width: 100%; border-collapse: collapse; font-size: 12.5px; table-layout: fixed; min-width: 900px; }
-  table.grid-table th { padding: 10px 14px; border-bottom: 1px solid var(--border); color: var(--muted); font-weight: 700; text-transform: uppercase; font-size: 11.5px; letter-spacing: .3px; }
-  table.grid-table td { padding: 10px 14px; border-bottom: 1px solid rgba(255,255,255,0.04); }
-  table.grid-table tr:hover td { background: var(--panel2); }
-  .badge-res { padding: 2px 7px; border-radius: 4px; font-size: 11px; font-weight: 700; }
-  .badge-win { background: rgba(38,166,154,0.15); color: var(--up); }
-  .badge-loss { background: rgba(239,83,80,0.15); color: var(--down); }
-</style>
+    /* Tables */
+    .table-box { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 18px 20px; width: 100%; box-sizing: border-box; overflow-x: auto; }
+    .table-box h3 { margin: 0 0 14px 0; font-size: 14px; font-weight: 700; color: #fff; display: flex; align-items: center; justify-content: center; gap: 8px; text-align: center; }
+    table.grid-table { width: 100%; border-collapse: collapse; font-size: 12.5px; table-layout: fixed; min-width: 900px; }
+    table.grid-table th { padding: 10px 14px; border-bottom: 1px solid var(--border); color: var(--muted); font-weight: 700; text-transform: uppercase; font-size: 11.5px; letter-spacing: .3px; }
+    table.grid-table td { padding: 10px 14px; border-bottom: 1px solid rgba(255,255,255,0.04); }
+    table.grid-table tr:hover td { background: var(--panel2); }
+    .badge-res { padding: 2px 7px; border-radius: 4px; font-size: 11px; font-weight: 700; }
+    .badge-win { background: rgba(38,166,154,0.15); color: var(--up); }
+    .badge-loss { background: rgba(239,83,80,0.15); color: var(--down); }
+  </style>
 </head>
 <body>
 
 <div class="top-header">
   <div class="brand">🚀 Algo<span>Trading</span>Daily</div>
   <div class="nav-tabs">
-    <a href="/" class="nav-tab">🏠 Overview</a>
+    <a href="/" class="nav-tab">📊 Overview</a>
     <a href="/backtest" class="nav-tab active">⚡ Strategy Backtester</a>
-    <a href="/chart" class="nav-tab">📊 Candle Visualizer</a>
-  </div>
-  <div class="status-pill">
-    <div class="status-dot"></div>
-    <span>DUCKDB READY (IST)</span>
+    <a href="/chart" class="nav-tab">📈 Candle Visualizer</a>
   </div>
 </div>
 
-<div class="content-wrap">
-  <div class="page-container">
-    <!-- System Telemetry Grid -->
-    <div class="dash-grid">
-      <div class="dash-card">
-        <div class="dash-title">DuckDB Historical Store <span>🦆</span></div>
-        <div class="dash-val" id="dash-candles">15,476,573</div>
-        <div class="dash-sub">1-Minute OHLCV Bars (Oct 2025 – Aug 2026)</div>
-      </div>
-      <div class="dash-card">
-        <div class="dash-title">Stock Universe Coverage <span>📈</span></div>
-        <div class="dash-val" id="dash-symbols">200 Symbols</div>
-        <div class="dash-sub">NIFTY 50 + NIFTY Next 50 + Midcaps</div>
-      </div>
-      <div class="dash-card">
-        <div class="dash-title">Active Production Strategy <span>🎯</span></div>
-        <div class="dash-val" style="font-size:18px;">VWAP-Stoch Breakdown</div>
-        <div class="dash-sub">Version: <b style="color:var(--accent);">v1.0.0 (Stable)</b> | 15m Timeframe</div>
-      </div>
-      <div class="dash-card">
-        <div class="dash-title">Database Storage Size <span>💾</span></div>
-        <div class="dash-val" id="dash-dbsize">1,262 MB</div>
-        <div class="dash-sub">Embedded Columnar Database</div>
-      </div>
+<div class="main-container">
+  <!-- Controls -->
+  <div class="backtest-ctrls">
+    <div class="ctrl-item">
+      <label>Strategy</label>
+      <select id="bt-strat"><option value="vwap_stoch_breakdown">VWAP-Stoch Breakdown</option></select>
     </div>
+    <div class="ctrl-item">
+      <label>Version</label>
+      <select id="bt-version"><option value="v1_0">v1_0 (Current)</option></select>
+    </div>
+    <div class="ctrl-item">
+      <label>Timeframe</label>
+      <select id="bt-timeframe">
+        <option value="15m" selected>15m (Primary)</option>
+        <option value="5m">5m</option>
+        <option value="1h">1h</option>
+      </select>
+    </div>
+    <div class="ctrl-item">
+      <label>Universe</label>
+      <select id="bt-universe">
+        <option value="ALL" selected>ALL (200 Stocks)</option>
+        <option value="NIFTY50">NIFTY 50</option>
+      </select>
+    </div>
+    <div class="ctrl-item">
+      <label>Capital (₹)</label>
+      <input type="number" id="bt-capital" value="100000" min="1000" step="1000">
+    </div>
+    <button class="btn-run" id="bt-run-btn" onclick="runBacktest()">▶️ Run Simulation</button>
+  </div>
 
-    <!-- Backtest Controls -->
-    <div class="backtest-ctrls">
-      <div class="ctrl-group">
-        <div class="ctrl-label">Strategy</div>
-        <select id="bt-strat" onchange="onStrategyChange()"></select>
-      </div>
-      <div class="ctrl-group">
-        <div class="ctrl-label">Version</div>
-        <select id="bt-version"></select>
-      </div>
-      <div class="ctrl-group">
-        <div class="ctrl-label">Timeframe</div>
-        <select id="bt-timeframe">
-          <option value="15m" selected>15 mins</option>
-          <option value="5m">5 mins</option>
-          <option value="1m">1 min</option>
-          <option value="1h">1 hour</option>
-          <option value="1d">1 day</option>
-        </select>
-      </div>
-      <div class="ctrl-group">
-        <div class="ctrl-label">Universe</div>
-        <select id="bt-universe">
-          <option value="ALL" selected>NIFTY 200</option>
-          <option value="NIFTY50">NIFTY 50</option>
-        </select>
-      </div>
-      <div class="ctrl-group">
-        <div class="ctrl-label">Capital (₹)</div>
-        <input type="number" id="bt-capital" value="100000" step="10000" min="10000" onkeydown="if(event.key==='.'||event.key===','||event.key==='e'||event.key==='E'||event.key==='-'||event.key==='+'){event.preventDefault();}" style="width:110px;">
-      </div>
-      <button class="primary-btn" id="bt-run-btn" onclick="runBacktest()">▶️ Run Simulation</button>
+  <!-- KPI Row 1: Core Financials & Returns -->
+  <div class="kpi-row">
+    <div class="kpi-card">
+      <div class="kpi-title">TOTAL TRADES</div>
+      <div class="kpi-val" id="kpi-trades">-</div>
+      <div class="kpi-sub" id="kpi-trades-sub">0 Wins / 0 Losses</div>
     </div>
+    <div class="kpi-card">
+      <div class="kpi-title">WIN RATE</div>
+      <div class="kpi-val pos" id="kpi-winrate">-</div>
+      <div class="kpi-sub" id="kpi-days-sub">0 Trading Days</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-title">PROFIT FACTOR</div>
+      <div class="kpi-val" id="kpi-pf">-</div>
+      <div class="kpi-sub" id="kpi-edge-sub">Gross Win/Loss Ratio</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-title">GROSS PROFIT</div>
+      <div class="kpi-val pos" id="kpi-gross">-</div>
+      <div class="kpi-sub">Pre-Tax Aggregate</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-title">TAXES & CHARGES</div>
+      <div class="kpi-val neg" id="kpi-fees">-</div>
+      <div class="kpi-sub">Statutory Friction</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-title">NET REALIZED PnL</div>
+      <div class="kpi-val pos" id="kpi-net">-</div>
+      <div class="kpi-sub" id="kpi-net-sub">Post-All Brokerage</div>
+    </div>
+  </div>
 
-    <!-- KPI Row -->
-    <div class="kpi-row">
-      <div class="kpi-card">
-        <div class="kpi-title">TOTAL TRADES</div>
-        <div class="kpi-val" id="kpi-trades">-</div>
-      </div>
-      <div class="kpi-card">
-        <div class="kpi-title">WIN RATE</div>
-        <div class="kpi-val pos" id="kpi-winrate">-</div>
-      </div>
-      <div class="kpi-card">
-        <div class="kpi-title">PROFIT FACTOR</div>
-        <div class="kpi-val" id="kpi-pf">-</div>
-      </div>
-      <div class="kpi-card">
-        <div class="kpi-title">GROSS PROFIT</div>
-        <div class="kpi-val pos" id="kpi-gross">-</div>
-      </div>
-      <div class="kpi-card">
-        <div class="kpi-title">TAXES & FEES</div>
-        <div class="kpi-val neg" id="kpi-fees">-</div>
-      </div>
-      <div class="kpi-card">
-        <div class="kpi-title">NET ROI (SHOONYA)</div>
-        <div class="kpi-val neg" id="kpi-net">-</div>
-      </div>
+  <!-- KPI Row 2: Quantitative Edge & Risk Metrics -->
+  <div class="kpi-row">
+    <div class="kpi-card">
+      <div class="kpi-title">MAX DRAWDOWN</div>
+      <div class="kpi-val neg" id="kpi-mdd">-</div>
+      <div class="kpi-sub" id="kpi-mdd-sub">Peak-to-Trough</div>
     </div>
+    <div class="kpi-card">
+      <div class="kpi-title">MAX EQUITY RUNUP</div>
+      <div class="kpi-val pos" id="kpi-runup">-</div>
+      <div class="kpi-sub" id="kpi-runup-sub">Trough-to-Peak Surge</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-title">WIN / LOSS STREAK</div>
+      <div class="kpi-val" id="kpi-streaks">-</div>
+      <div class="kpi-sub">Max Consecutive</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-title">TRADE EXPECTANCY</div>
+      <div class="kpi-val pos" id="kpi-expectancy">-</div>
+      <div class="kpi-sub">Expected Edge / Trade</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-title">AVG WIN / AVG LOSS</div>
+      <div class="kpi-val" id="kpi-avg-winloss">-</div>
+      <div class="kpi-sub">Trade Size Ratio</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-title">LARGEST WIN / LOSS</div>
+      <div class="kpi-val" id="kpi-extreme-winloss">-</div>
+      <div class="kpi-sub">Single Trade Extremes</div>
+    </div>
+  </div>
 
-    <!-- Table 1: Multi-Broker Matrix -->
-    <div class="table-box">
-      <h3>🏛️ Multi-Broker Net Profit Comparison Matrix</h3>
-      <table class="grid-table">
-        <thead>
-          <tr>
-            <th style="width: 35%;">Broker Schedule</th>
-            <th style="width: 22%; text-align: right;">Total Taxes & Fees</th>
-            <th style="width: 23%; text-align: right;">Net Realized PnL (₹)</th>
-            <th style="width: 20%; text-align: right;">Net ROI %</th>
-          </tr>
-        </thead>
-        <tbody id="bt-broker-rows"></tbody>
-      </table>
-    </div>
+  <!-- Table 0: Month-Wise Performance Breakdown -->
+  <div class="table-box">
+    <h3>📅 Monthly Performance & ROI Breakdown (Shoonya Baseline)</h3>
+    <table class="grid-table">
+      <thead>
+        <tr>
+          <th style="width: 14%;">Month</th>
+          <th style="width: 12%; text-align: center;">Trades (W / L)</th>
+          <th style="width: 12%; text-align: right;">Win Rate %</th>
+          <th style="width: 16%; text-align: right;">Gross PnL (₹)</th>
+          <th style="width: 15%; text-align: right;">Taxes & Fees (₹)</th>
+          <th style="width: 16%; text-align: right;">Net Realized PnL (₹)</th>
+          <th style="width: 15%; text-align: right;">ROI %</th>
+        </tr>
+      </thead>
+      <tbody id="bt-month-rows"></tbody>
+    </table>
+  </div>
 
-    <!-- Table 2: Trade Log -->
-    <div class="table-box">
-      <h3>📜 Recent Executed Trade Log (Last 50 Fills)</h3>
-      <table class="grid-table">
-        <thead>
-          <tr>
-            <th style="width: 14%;">Symbol</th>
-            <th style="width: 17%;">Entry Time (IST)</th>
-            <th style="width: 17%;">Exit Time (IST)</th>
-            <th style="width: 10%; text-align: center;">Result</th>
-            <th style="width: 10%; text-align: right;">PnL %</th>
-            <th style="width: 10%; text-align: right;">Gross PnL</th>
-            <th style="width: 11%; text-align: right;">Net Realized PnL</th>
-            <th style="width: 11%; text-align: right;">Ending Balance</th>
-          </tr>
-        </thead>
-        <tbody id="bt-trade-rows"></tbody>
-      </table>
-    </div>
+  <!-- Table 1: Multi-Broker Matrix -->
+  <div class="table-box">
+    <h3>⚖️ Multi-Broker Net Profit Comparison Matrix</h3>
+    <table class="grid-table">
+      <thead>
+        <tr>
+          <th style="width: 35%;">Broker Schedule</th>
+          <th style="width: 22%; text-align: right;">Total Taxes & Fees</th>
+          <th style="width: 23%; text-align: right;">Net Realized PnL (₹)</th>
+          <th style="width: 20%; text-align: right;">Net ROI %</th>
+        </tr>
+      </thead>
+      <tbody id="bt-broker-rows"></tbody>
+    </table>
+  </div>
+
+  <!-- Table 2: Trade Log -->
+  <div class="table-box">
+    <h3>📜 Recent Executed Trade Log (Last 50 Fills)</h3>
+    <table class="grid-table">
+      <thead>
+        <tr>
+          <th style="width: 10%;">Symbol</th>
+          <th style="width: 14%;">Entry Time</th>
+          <th style="width: 14%;">Exit Time</th>
+          <th style="width: 12%; text-align: center;">Result</th>
+          <th style="width: 10%; text-align: right;">Return %</th>
+          <th style="width: 12%; text-align: right;">Gross PnL (₹)</th>
+          <th style="width: 14%; text-align: right;">Net PnL (₹)</th>
+          <th style="width: 14%; text-align: right;">Ending Capital</th>
+        </tr>
+      </thead>
+      <tbody id="bt-trade-rows"></tbody>
+    </table>
   </div>
 </div>
 
@@ -234,16 +305,6 @@ let strategiesList = [];
 function safeFmt(val) {
   if (val === null || val === undefined || isNaN(val)) return '0.00';
   return Number(val).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-}
-
-async function loadSystemStats() {
-  try {
-    const res = await fetch('/api/system/stats');
-    const data = await res.json();
-    if (data.total_candles) document.getElementById('dash-candles').innerText = Number(data.total_candles).toLocaleString('en-IN');
-    if (data.total_symbols) document.getElementById('dash-symbols').innerText = data.total_symbols + ' Symbols';
-    if (data.db_size_mb) document.getElementById('dash-dbsize').innerText = data.db_size_mb + ' MB';
-  } catch (e) {}
 }
 
 async function loadStrategies() {
@@ -259,23 +320,8 @@ async function loadStrategies() {
       opt.innerText = s.name;
       stratSel.appendChild(opt);
     });
-    onStrategyChange();
-  } catch (e) {}
-}
-
-function onStrategyChange() {
-  const stratId = document.getElementById('bt-strat').value;
-  const strat = strategiesList.find(s => s.id === stratId);
-  const vSel = document.getElementById('bt-version');
-  vSel.innerHTML = '';
-  if (strat && strat.versions) {
-    strat.versions.forEach(v => {
-      const opt = document.createElement('option');
-      opt.value = v.module;
-      opt.innerText = `v${v.version}`;
-      if (v.is_default) opt.selected = true;
-      vSel.appendChild(opt);
-    });
+  } catch (e) {
+    console.error("loadStrategies error:", e);
   }
 }
 
@@ -285,7 +331,7 @@ async function runBacktest() {
   const capVal = parseInt(rawVal, 10);
 
   if (!rawVal || isNaN(capVal) || capVal < 1000 || String(rawVal).includes('.')) {
-    alert('⚠️ Invalid Capital: Please enter a whole positive integer of at least ₹1,000 (e.g. ₹10,000). Decimals and zero are not allowed.');
+    alert('⚠️ Invalid Capital: Please enter a whole positive integer of at least ₹1,000 (e.g. ₹100,000).');
     capitalInput.focus();
     return;
   }
@@ -295,10 +341,10 @@ async function runBacktest() {
   btn.innerText = '⏳ Simulating...';
 
   const payload = {
-    strategy_id: document.getElementById('bt-strat').value,
-    version: document.getElementById('bt-version').value,
-    timeframe: document.getElementById('bt-timeframe').value,
-    universe: document.getElementById('bt-universe').value,
+    strategy_id: document.getElementById('bt-strat').value || 'vwap_stoch_breakdown',
+    version: document.getElementById('bt-version').value || 'v1_0',
+    timeframe: document.getElementById('bt-timeframe').value || '15m',
+    universe: document.getElementById('bt-universe').value || 'ALL',
     capital: capVal
   };
 
@@ -309,32 +355,104 @@ async function runBacktest() {
       body: JSON.stringify(payload)
     });
     const d = await res.json();
-    
+
+    // Row 1: Core Financials
     document.getElementById('kpi-trades').innerText = d.trades_count || 0;
+    if (document.getElementById('kpi-trades-sub')) {
+      document.getElementById('kpi-trades-sub').innerText = `${d.wins_count || 0} Wins / ${d.losses_count || 0} Losses`;
+    }
+    
     document.getElementById('kpi-winrate').innerText = (d.win_rate_pct || 0) + '%';
+    if (document.getElementById('kpi-days-sub')) {
+      document.getElementById('kpi-days-sub').innerText = `${d.trading_days || 0} Trading Days (${d.start_date || ''} to ${d.end_date || ''})`;
+    }
+
     document.getElementById('kpi-pf').innerText = d.profit_factor || '0.00';
-    document.getElementById('kpi-gross').innerText = ((d.gross_pnl || 0) >= 0 ? '+' : '') + '₹' + safeFmt(d.gross_pnl);
-    document.getElementById('kpi-fees').innerText = '₹' + safeFmt(d.total_taxes_fees);
-    document.getElementById('kpi-net').innerText = ((d.net_roi_pct || 0) >= 0 ? '+' : '') + (d.net_roi_pct || 0) + '%';
-    document.getElementById('kpi-net').className = 'kpi-val ' + ((d.net_roi_pct || 0) >= 0 ? 'pos' : 'neg');
+    
+    const grossPnL = d.gross_pnl || 0;
+    document.getElementById('kpi-gross').innerText = (grossPnL >= 0 ? '+' : '-') + '₹' + safeFmt(Math.abs(grossPnL));
+    document.getElementById('kpi-gross').className = 'kpi-val ' + (grossPnL >= 0 ? 'pos' : 'neg');
+    
+    document.getElementById('kpi-fees').innerText = '₹' + safeFmt(d.total_charges);
+    
+    const netPnL = d.net_pnl || 0;
+    const netROI = d.net_roi_pct || 0;
+    document.getElementById('kpi-net').innerText = (netPnL >= 0 ? '+' : '-') + '₹' + safeFmt(Math.abs(netPnL));
+    document.getElementById('kpi-net').className = 'kpi-val ' + (netPnL >= 0 ? 'pos' : 'neg');
+    if (document.getElementById('kpi-net-sub')) {
+      document.getElementById('kpi-net-sub').innerText = `${netROI >= 0 ? '+' : ''}${netROI}% ROI (Shoonya Baseline)`;
+    }
 
+    // Row 2: Quantitative Edge & Risk Metrics
+    if (document.getElementById('kpi-mdd')) {
+      document.getElementById('kpi-mdd').innerText = '-₹' + safeFmt(d.max_drawdown);
+      document.getElementById('kpi-mdd-sub').innerText = `-${d.max_drawdown_pct || 0}% Peak Drawdown`;
+    }
+    if (document.getElementById('kpi-runup')) {
+      document.getElementById('kpi-runup').innerText = '+₹' + safeFmt(d.max_runup);
+      document.getElementById('kpi-runup-sub').innerText = `+${d.max_runup_pct || 0}% Maximum Surge`;
+    }
+    if (document.getElementById('kpi-streaks')) {
+      document.getElementById('kpi-streaks').innerText = `${d.max_win_streak || 0}W / ${d.max_loss_streak || 0}L`;
+    }
+    if (document.getElementById('kpi-expectancy')) {
+      const exp = d.trade_expectancy || 0;
+      document.getElementById('kpi-expectancy').innerText = (exp >= 0 ? '+' : '-') + '₹' + safeFmt(Math.abs(exp)) + ' / tr';
+      document.getElementById('kpi-expectancy').className = 'kpi-val ' + (exp >= 0 ? 'pos' : 'neg');
+    }
+    if (document.getElementById('kpi-avg-winloss')) {
+      document.getElementById('kpi-avg-winloss').innerText = `+₹${safeFmt(d.avg_win)} / -₹${safeFmt(d.avg_loss)}`;
+    }
+    if (document.getElementById('kpi-extreme-winloss')) {
+      document.getElementById('kpi-extreme-winloss').innerText = `+₹${safeFmt(d.largest_win)} / -₹${safeFmt(Math.abs(d.largest_loss))}`;
+    }
+
+    // Table 0: Monthly Breakdown Rows
+    const mTbody = document.getElementById('bt-month-rows');
+    if (mTbody) {
+      mTbody.innerHTML = '';
+      (d.monthly_breakdown || []).forEach(m => {
+        const tr = document.createElement('tr');
+        const isPos = (m.net_pnl || 0) >= 0;
+        const gSign = (m.gross_pnl || 0) >= 0 ? '+' : '-';
+        const nSign = isPos ? '+' : '-';
+        const roiSign = (m.roi_pct || 0) >= 0 ? '+' : '';
+        tr.innerHTML = `
+          <td><b>${m.month}</b></td>
+          <td style="text-align:center;">${m.trades} (${m.wins}W / ${m.losses}L)</td>
+          <td style="text-align:right;">${m.win_rate}%</td>
+          <td style="text-align:right;color:${(m.gross_pnl||0)>=0?'var(--up)':'var(--down)'};">${gSign}₹${safeFmt(Math.abs(m.gross_pnl))}</td>
+          <td style="text-align:right;color:var(--muted);">₹${safeFmt(m.taxes_fees)}</td>
+          <td style="text-align:right;color:${isPos?'var(--up)':'var(--down)'};font-weight:700;">${nSign}₹${safeFmt(Math.abs(m.net_pnl))}</td>
+          <td style="text-align:right;"><span class="${isPos?'badge-month-pos':'badge-month-neg'}">${roiSign}${m.roi_pct}%</span></td>
+        `;
+        mTbody.appendChild(tr);
+      });
+    }
+
+    // Table 1: Multi-Broker Matrix
     const bTbody = document.getElementById('bt-broker-rows');
-    bTbody.innerHTML = '';
-    (d.broker_comparison || []).forEach(b => {
-      const tr = document.createElement('tr');
-      const isWin = (b.net_pnl || 0) >= 0;
-      tr.innerHTML = `<td><b>${b.broker}</b></td><td style="text-align:right;">₹${safeFmt(b.total_fees)}</td><td style="text-align:right;color:${isWin?'var(--up)':'var(--down)'};font-weight:700;">${isWin?'+':''}₹${safeFmt(b.net_pnl)}</td><td style="text-align:right;color:${isWin?'var(--up)':'var(--down)'};font-weight:700;">${isWin?'+':''}${b.roi_pct}%</td>`;
-      bTbody.appendChild(tr);
-    });
+    if (bTbody) {
+      bTbody.innerHTML = '';
+      (d.broker_comparison || []).forEach(b => {
+        const tr = document.createElement('tr');
+        const isWin = (b.net_pnl || 0) >= 0;
+        tr.innerHTML = `<td><b>${b.broker}</b></td><td style="text-align:right;">₹${safeFmt(b.total_fees)}</td><td style="text-align:right;color:${isWin?'var(--up)':'var(--down)'};font-weight:700;">${isWin?'+':''}₹${safeFmt(b.net_pnl)}</td><td style="text-align:right;color:${isWin?'var(--up)':'var(--down)'};font-weight:700;">${isWin?'+':''}${b.roi_pct}%</td>`;
+        bTbody.appendChild(tr);
+      });
+    }
 
+    // Table 2: Trade Log
     const tTbody = document.getElementById('bt-trade-rows');
-    tTbody.innerHTML = '';
-    (d.trades || []).slice(-50).reverse().forEach(t => {
-      const tr = document.createElement('tr');
-      const isWin = (t.net_pnl || 0) > 0;
-      tr.innerHTML = `<td><b>${t.symbol}</b></td><td>${(t.entry_time || '').slice(0,16)}</td><td>${(t.exit_time || '').slice(0,16)}</td><td style="text-align:center;"><span class="badge-res ${isWin?'badge-win':'badge-loss'}">${t.result}</span></td><td style="text-align:right;color:${(t.pnl_pct||0)>=0?'var(--up)':'var(--down)'};">${(t.pnl_pct||0)>0?'+':''}${t.pnl_pct}%</td><td style="text-align:right;">₹${safeFmt(t.gross_pnl)}</td><td style="text-align:right;color:${isWin?'var(--up)':'var(--down)'};font-weight:700;">${isWin?'+':''}₹${safeFmt(t.net_pnl)}</td><td style="text-align:right;">₹${safeFmt(t.ending_capital)}</td>`;
-      tTbody.appendChild(tr);
-    });
+    if (tTbody) {
+      tTbody.innerHTML = '';
+      (d.trades || []).slice(-50).reverse().forEach(t => {
+        const tr = document.createElement('tr');
+        const isWin = (t.net_pnl || 0) > 0;
+        tr.innerHTML = `<td><b>${t.symbol}</b></td><td>${(t.entry_time || '').slice(0,16)}</td><td>${(t.exit_time || '').slice(0,16)}</td><td style="text-align:center;"><span class="badge-res ${isWin?'badge-win':'badge-loss'}">${t.result}</span></td><td style="text-align:right;color:${(t.pnl_pct||0)>=0?'var(--up)':'var(--down)'};">${(t.pnl_pct||0)>0?'+':''}${t.pnl_pct}%</td><td style="text-align:right;">₹${safeFmt(t.gross_pnl)}</td><td style="text-align:right;color:${isWin?'var(--up)':'var(--down)'};font-weight:700;">${isWin?'+':''}₹${safeFmt(t.net_pnl)}</td><td style="text-align:right;">₹${safeFmt(t.ending_capital)}</td>`;
+        tTbody.appendChild(tr);
+      });
+    }
 
   } catch (e) {
     alert("Error running simulation: " + e);
@@ -345,9 +463,7 @@ async function runBacktest() {
 }
 
 window.onload = () => {
-  loadSystemStats();
   loadStrategies();
-  runBacktest();
 };
 </script>
 </body>
