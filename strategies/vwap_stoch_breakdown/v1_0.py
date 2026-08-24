@@ -56,7 +56,7 @@ class VWAPStochBreakdownStrategy(BaseStrategy):
         Evaluates the VWAP-Stoch Breakdown strategy criteria on 15m candle DataFrames.
         Returns enriched DataFrame with boolean 'Signal' column, or None if data is insufficient.
         """
-        if df.empty or len(df) < 50:
+        if df is None or df.empty or len(df) < 50:
             return None
 
         if isinstance(df.columns, pd.MultiIndex):
