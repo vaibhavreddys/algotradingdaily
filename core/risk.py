@@ -47,19 +47,24 @@ def calculate_risk_based_quantity(
 
 
 def is_daily_loss_limit_reached(
-    today_realized_pnl: float,
-    day_starting_capital: float,
-    max_loss_pct: float = 0.04
+    today_realized_pnl: Optional[float] = None,
+    day_starting_capital: Optional[float] = None,
+    max_loss_pct: float = 0.04,
+    starting_capital: Optional[float] = None,
+    current_capital: Optional[float] = None,
+    **kwargs
 ) -> bool:
-    """
-    Daily Risk Circuit Breaker:
-    Checks if today's cumulative realized loss meets or exceeds the maximum daily loss threshold (4%).
-    """
-    if day_starting_capital <= 0:
+    start_cap = day_starting_capital if day_starting_capital is not None else (starting_capital or 0.0)
+    if start_cap <= 0:
         return True
 
-    daily_loss_limit = -abs(day_starting_capital * max_loss_pct)
-    return today_realized_pnl <= daily_loss_limit
+    if today_realized_pnl is None and current_capital is not None:
+        pnl = current_capital - start_cap
+    else:
+        pnl = today_realized_pnl if today_realized_pnl is not None else 0.0
+
+    daily_loss_limit = -abs(start_cap * max_loss_pct)
+    return pnl <= daily_loss_limit
 
 
 def should_trail_to_breakeven(

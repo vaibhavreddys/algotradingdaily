@@ -130,9 +130,10 @@ class BaseTradingEngine:
     def is_daily_circuit_breaker_active(self) -> bool:
         """Checks if daily realized drawdowns have reached the daily safety threshold."""
         curr_cap = self.get_account_capital()
+        today_realized_pnl = curr_cap - self.day_starting_capital
         return is_daily_loss_limit_reached(
-            starting_capital=self.day_starting_capital,
-            current_capital=curr_cap,
+            today_realized_pnl=today_realized_pnl,
+            day_starting_capital=self.day_starting_capital,
             max_loss_pct=self.config.MAX_DAILY_LOSS_PCT
         )
 
