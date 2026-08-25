@@ -78,8 +78,9 @@ class TradingConfig:
     # -------------------------------------------------------------------------
     EXCHANGE_MARKET: str = "NSE"
     ACTIVE_BROKER: str = "shoonya"
-    TRADING_MODE: str = "paper"  # 'paper' or 'live'
-    ORDER_TYPE: str = "BO"       # 'BO' or 'MIS'
+    TRADING_MODE: str = "paper"     # 'paper' or 'live'
+    UNIVERSE: str = "NIFTY50"       # 'NIFTY50' (50 stocks) or 'NIFTY200' (200 stocks)
+    ORDER_TYPE: str = "BO"          # 'BO' or 'MIS'
 
     # -------------------------------------------------------------------------
     # OpenAlgo Unified OMS Gateway
