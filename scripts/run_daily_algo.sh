@@ -26,7 +26,7 @@ echo "Target log: ${OUTPUT_LOG}" >> "${REPO_DIR}/daily_cron.log"
 echo "==========================================" >> "${REPO_DIR}/daily_cron.log"
 
 # 1. Pull latest code from GitHub
-git pull origin main >> "${REPO_DIR}/daily_cron.log" 2>&1
+git pull origin main >> "${REPO_DIR}/daily_cron.log" 2>&1 || true
 
 # 2. Activate virtual environment
 if [ -f "${REPO_DIR}/venv/bin/activate" ]; then
@@ -35,7 +35,8 @@ else
     echo "⚠️ Warning: venv not found at ${REPO_DIR}/venv, using system python" >> "${REPO_DIR}/daily_cron.log"
 fi
 
-# 3. Launch the selected trading engine with isolated logging
-python "${TARGET_SCRIPT}" >> "${OUTPUT_LOG}" 2>&1
+# 3. Launch the selected trading engine with unbuffered live output
+export PYTHONUNBUFFERED=1
+python -u "${TARGET_SCRIPT}" >> "${OUTPUT_LOG}" 2>&1
 
 echo "Session [${MODE_LOWER^^}] finished cleanly at: $(date)" >> "${REPO_DIR}/daily_cron.log"
