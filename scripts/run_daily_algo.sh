@@ -1,5 +1,4 @@
 #!/bin/bash
-set -e
 
 # Resolve repository root dynamically relative to the script location
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -19,24 +18,24 @@ else
     OUTPUT_LOG="${REPO_DIR}/paper_trading_output.log"
 fi
 
-echo "==========================================" >> "${REPO_DIR}/daily_cron.log"
-echo "Starting AlgoTradingDaily [${MODE_LOWER^^}]: $(date)" >> "${REPO_DIR}/daily_cron.log"
-echo "Repository path: ${REPO_DIR}" >> "${REPO_DIR}/daily_cron.log"
-echo "Target log: ${OUTPUT_LOG}" >> "${REPO_DIR}/daily_cron.log"
-echo "==========================================" >> "${REPO_DIR}/daily_cron.log"
+echo "=========================================="
+echo "Starting AlgoTradingDaily [${MODE_LOWER^^}]: $(date)"
+echo "Repository path: ${REPO_DIR}"
+echo "Target log: ${OUTPUT_LOG}"
+echo "=========================================="
 
 # 1. Pull latest code from GitHub
-git pull origin main >> "${REPO_DIR}/daily_cron.log" 2>&1 || true
+git pull origin main || true
 
 # 2. Activate virtual environment
 if [ -f "${REPO_DIR}/venv/bin/activate" ]; then
     source "${REPO_DIR}/venv/bin/activate"
 else
-    echo "⚠️ Warning: venv not found at ${REPO_DIR}/venv, using system python" >> "${REPO_DIR}/daily_cron.log"
+    echo "⚠️ Warning: venv not found at ${REPO_DIR}/venv, using system python"
 fi
 
-# 3. Launch the selected trading engine with unbuffered live output
+# 3. Launch the selected trading engine (logs to file AND displays on terminal)
 export PYTHONUNBUFFERED=1
-python -u "${TARGET_SCRIPT}" >> "${OUTPUT_LOG}" 2>&1
+python -u "${TARGET_SCRIPT}" 2>&1 | tee -a "${OUTPUT_LOG}"
 
-echo "Session [${MODE_LOWER^^}] finished cleanly at: $(date)" >> "${REPO_DIR}/daily_cron.log"
+echo "Session [${MODE_LOWER^^}] finished cleanly at: $(date)"
