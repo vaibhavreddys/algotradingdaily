@@ -373,7 +373,12 @@ class BaseTradingEngine:
             print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] 🛑 [CIRCUIT BREAKER] Daily Loss reached. Halting new scan entries.")
             return
 
-        symbols = get_nifty50_symbols()
+        universe_name = getattr(self.config, 'UNIVERSE', 'NIFTY50').upper()
+        if universe_name == 'NIFTY200':
+            from data_pipeline.openalgo_ingestion import get_symbols_for_universe
+            symbols = get_symbols_for_universe('NIFTY200')
+        else:
+            symbols = get_nifty50_symbols()
         total_symbols = len(symbols)
 
         funnel_stats = {
