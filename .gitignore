@@ -31,3 +31,20 @@ database/*
 !database/.gitkeep
 trade_state.db
 *.db
+# Logs & Cron Output
+*.log
+logs/
+daily_cron.log
+trading_output.log
+paper_trading_output.log
+live_trading_output.log
+
+# Temporary Scratch Scripts & Working Artifacts
+scratch/
+
+# Ingested Benchmark & Candle CSV Caches
+data_pipeline/*.csv
+
+# DuckDB Files
+*.duckdb
+*.duckdb.wal
