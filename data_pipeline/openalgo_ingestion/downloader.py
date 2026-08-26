@@ -297,9 +297,13 @@ class ThrottledIngestionEngine:
                 continue
             try:
                 frame = self._fetch_from_broker(symbol, start, end)
-                self._store_frame(frame)
-                self.mark_chunk(symbol, start, end, "SUCCESS")
-                logger.info("[%d/%d] Saved %d rows for %s [%s to %s]", number, total, len(frame), symbol, start, end)
+                if frame is not None and not frame.empty and len(frame) > 0:
+                    self._store_frame(frame)
+                    self.mark_chunk(symbol, start, end, "SUCCESS")
+                    logger.info("[%d/%d] Saved %d rows for %s [%s to %s]", number, total, len(frame), symbol, start, end)
+                else:
+                    self.mark_chunk(symbol, start, end, "EMPTY_NO_ROWS")
+                    logger.warning("[%d/%d] ⚠️ Zero rows returned for %s [%s to %s] - marked as EMPTY (will auto-retry)", number, total, symbol, start, end)
             except Exception as exc:
                 self.mark_chunk(symbol, start, end, f"FAILED: {exc}")
                 logger.error("[%d/%d] Failed %s [%s to %s]: %s", number, total, symbol, start, end, exc)

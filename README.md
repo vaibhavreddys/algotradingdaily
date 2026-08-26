@@ -71,24 +71,34 @@ python backtesting/portfolio_sim.py --version v1_0 --timeframe 5m --universe NIF
 
 ## ☁️ Automated VPS Deployment & Telemetry
 
-### 1. Daily Market Runner (`scripts/run_daily_algo.sh`)
-The repository includes a self-healing daily runner for Linux VPS environments:
-* **09:05 AM IST**: Auto-pulls latest GitHub commits and boots virtual environment.
+### 1. Daily Market Lifecycle (`scripts/run_daily_algo.sh`)
+The repository includes a fully autonomous daily runner for cloud VPS environments:
+* **09:05 AM IST**: Wakes up, auto-cleans logs older than 30 days, pulls latest GitHub commits, and boots runtime.
 * **09:15 – 10:00 AM IST**: Pre-warms NIFTY benchmarks and initial 15m candle bar.
-* **10:00 – 14:45 PM IST**: Concurrently scans NIFTY 200 constituents on 15m candle closes and monitors positions via 15-second micro guardian.
+* **10:00 – 14:45 PM IST**: Concurrently scans **all 200 constituents of NIFTY 200** on 15m candle closes and monitors positions via 15-second micro guardian.
 * **15:00 PM IST**: Enforces mandatory intraday square-off.
-* **15:30 PM IST**: Emits End-of-Day PnL scorecard to Telegram and shuts down cleanly.
+* **15:30 PM IST**: Emits End-of-Day performance scorecard to Telegram and cleanly terminates until next morning.
 
-### 2. Schedule via Linux Crontab:
+### 2. 24/7 Background Service Setup (OpenAlgo Gateway)
+Install OpenAlgo as a self-healing background systemd service in 1 command:
+```bash
+./scripts/install_openalgo_service.sh
+```
+
+### 3. Schedule Daily Algo via Linux Crontab:
 ```cron
 # Run Monday through Friday at 09:05 AM IST
 5 9 * * 1-5 /home/ubuntu/trading/algotradingdaily/scripts/run_daily_algo.sh paper
 ```
 
-### 3. State & Database Sync from VPS to Laptop:
-Pull the latest trade journals (`paper_trades.db`), live logs, and candle archives in 1 click:
-```powershell
-.\scripts\sync_from_vps.ps1 -KeyPath "path\to\your\oracle_key.key"
+### 4. Smart Laptop State & DuckDB Sync:
+Sync trade journals (`paper_trades.db`), hierarchical logs (`logs/paper/`), and incrementally sync missing DuckDB bars with a single Python command:
+```bash
+# Sync trade journals and logs:
+python scripts/sync_from_vps.py --key "path/to/your/oracle_key.key"
+
+# Or include Smart DuckDB Delta Sync (transfers only new missing bars via compressed Parquet):
+python scripts/sync_from_vps.py --key "path/to/your/oracle_key.key" --duckdb
 ```
 
 ### 4. Telegram Bot (long-polling worker)
@@ -153,8 +163,9 @@ algotradingdaily/
 │   └── openalgo/
 │       └── backtest_data.duckdb  # 15.48M 1-minute historical bars (1.32 GB)
 ├── scripts/
-│   ├── run_daily_algo.sh         # Dynamic automated daily cron runner for VPS
-│   └── sync_from_vps.ps1         # 1-click state sync tool from VPS to laptop
+│   ├── install_openalgo_service.sh # 1-click 24/7 OpenAlgo systemd daemon installer
+│   ├── run_daily_algo.sh           # Dynamic daily cron runner with 30-day log rotation
+│   └── sync_from_vps.py            # Universal state sync & smart DuckDB delta transfer
 ├── strategies/
 │   ├── base_strategy.py          # Abstract strategy contract (BaseStrategy)
 │   ├── registry.py               # Dynamic strategy & version discovery engine
