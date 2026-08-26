@@ -45,7 +45,7 @@ class ThrottledIngestionEngine:
         self._init_duckdb()
         self._init_state_db()
 
-        def _init_duckdb(self) -> None:
+    def _init_duckdb(self) -> None:
         settings.STORAGE_DIR.mkdir(parents=True, exist_ok=True)
         con = self._duckdb.connect(str(settings.DB_PATH))
         try:
