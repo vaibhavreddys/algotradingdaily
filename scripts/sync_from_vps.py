@@ -6,7 +6,7 @@ Seamlessly syncs EVERYTHING from VPS in 1 shot:
   3. Benchmark & Candle Archives (data_pipeline/*.csv)
   4. Smart DuckDB Sync (auto full download if missing, or tiny compressed delta if present)
 """
-import sys, os, subprocess, tempfile, argparse, glob
+import sys, os, subprocess, tempfile, argparse
 
 def get_env_key():
     """Check if ORACLE_SSH_KEY or VPS_SSH_KEY is set in environment or .env."""
@@ -25,20 +25,22 @@ def sync_from_vps(vps_ip="130.210.49.136", key_path=None):
     local_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
     
     if not key_path:
-        key_path = find_default_key()
+        key_path = get_env_key()
         
-    # If key is still not found and running interactively, prompt the user!
+    # If key is not provided via CLI or .env, prompt the user directly
     if not key_path and sys.stdin.isatty():
-        print("🔑 No SSH private key found in standard locations (~/.ssh, Downloads, Desktop).")
         try:
             user_input = input("👉 Enter the full path to your Oracle SSH key (.key): ").strip().strip('"').strip("'")
             if user_input and os.path.exists(user_input):
                 key_path = user_input
             elif user_input:
                 print(f"⚠️ File not found: {user_input}")
+                sys.exit(1)
+            else:
+                print("❌ SSH key path is required.")
+                sys.exit(1)
         except (KeyboardInterrupt, EOFError):
-            print("
-Aborted.")
+            print("\nAborted.")
             sys.exit(0)
 
     print("=====================================================")
