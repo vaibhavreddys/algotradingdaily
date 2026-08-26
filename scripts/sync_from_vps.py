@@ -8,6 +8,14 @@ Seamlessly syncs EVERYTHING from VPS in 1 shot:
 """
 import sys, os, subprocess, tempfile, argparse
 
+# Safe Windows stdout encoding
+if hasattr(sys.stdout, 'reconfigure'):
+    try:
+        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+        sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+    except Exception:
+        pass
+
 def get_env_key():
     """Check if ORACLE_SSH_KEY or VPS_SSH_KEY is set in environment or .env."""
     env_key = os.getenv("ORACLE_SSH_KEY") or os.getenv("VPS_SSH_KEY")
@@ -44,7 +52,7 @@ def sync_from_vps(vps_ip="130.210.49.136", key_path=None):
             sys.exit(0)
 
     print("=====================================================")
-    print(f" 🚀 1-Click AlgoTrading State Sync from VPS: {vps_ip}")
+    print(f" [SYNC] 1-Click AlgoTrading State Sync from VPS: {vps_ip}")
     if key_path:
         print(f" Key: {key_path}")
     print("=====================================================")
@@ -101,7 +109,9 @@ def sync_from_vps(vps_ip="130.210.49.136", key_path=None):
             local_parquet = os.path.join(temp_dir, "delta_export.parquet")
             remote_parquet = "/tmp/delta_export.parquet"
 
-            remote_query = f"""python3 -c "import duckdb; con = duckdb.connect(\'{remote_db_path}\', read_only=True); con.execute(\\\"COPY (SELECT * FROM ohlcv_1m WHERE timestamp > \'\'{ts_str}\'\') TO \'{remote_parquet}\' (FORMAT PARQUET, COMPRESSION ZSTD)\\\")" """
+            export_script = f"import duckdb; con = duckdb.connect('{remote_db_path}', read_only=True); con.execute(\\\"COPY (SELECT * FROM ohlcv_1m WHERE timestamp > '{ts_str}') TO '{remote_parquet}' (FORMAT PARQUET, COMPRESSION ZSTD)\\\")"
+            remote_query = f"python3 -c \"{export_script}\""
+
             res_ssh = run_cmd(ssh_base + [f"ubuntu@{vps_ip}", remote_query])
             if res_ssh.returncode != 0:
                 print(f"   ⚠️ Remote Parquet Export Failed: {res_ssh.stderr.strip()}")
