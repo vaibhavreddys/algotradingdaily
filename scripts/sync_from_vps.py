@@ -8,23 +8,11 @@ Seamlessly syncs EVERYTHING from VPS in 1 shot:
 """
 import sys, os, subprocess, tempfile, argparse, glob
 
-def find_default_key():
-    """Auto-detect Oracle SSH key in common locations if not provided."""
+def get_env_key():
+    """Check if ORACLE_SSH_KEY or VPS_SSH_KEY is set in environment or .env."""
     env_key = os.getenv("ORACLE_SSH_KEY") or os.getenv("VPS_SSH_KEY")
     if env_key and os.path.exists(env_key):
         return env_key
-    
-    home = os.path.expanduser("~")
-    common_patterns = [
-        os.path.join(home, ".ssh", "*.key"),
-        os.path.join(home, ".ssh", "id_rsa*"),
-        os.path.join(home, "Downloads", "*.key"),
-        os.path.join(home, "Desktop", "*.key")
-    ]
-    for pattern in common_patterns:
-        matches = glob.glob(pattern)
-        if matches:
-            return matches[0]
     return None
 
 def run_cmd(cmd_list, desc=None):
