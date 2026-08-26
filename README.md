@@ -91,13 +91,13 @@ Install OpenAlgo as a self-healing background systemd service in 1 command:
 ```
 
 ### 4. Smart Laptop State & DuckDB Sync:
-Sync trade journals (`paper_trades.db`), hierarchical logs (`logs/paper/`), and incrementally sync missing DuckDB bars in 1 click:
-```powershell
+Sync trade journals (`paper_trades.db`), hierarchical logs (`logs/paper/`), and incrementally sync missing DuckDB bars with a single Python command:
+```bash
 # Sync trade journals and logs:
-.\scripts\sync_from_vps.ps1 -KeyPath "path\to\your\oracle_key.key"
+python scripts/sync_from_vps.py --key "path/to/your/oracle_key.key"
 
 # Or include Smart DuckDB Delta Sync (transfers only new missing bars via compressed Parquet):
-.\scripts\sync_from_vps.ps1 -KeyPath "path\to\your\oracle_key.key" -IncludeDuckDb
+python scripts/sync_from_vps.py --key "path/to/your/oracle_key.key" --duckdb
 ```
 
 ---
@@ -146,8 +146,7 @@ algotradingdaily/
 ├── scripts/
 │   ├── install_openalgo_service.sh # 1-click 24/7 OpenAlgo systemd daemon installer
 │   ├── run_daily_algo.sh           # Dynamic daily cron runner with 30-day log rotation
-│   ├── sync_from_vps.py            # Unified state sync & smart DuckDB delta transfer
-│   └── sync_from_vps.ps1           # 1-click Windows PowerShell sync wrapper
+│   └── sync_from_vps.py            # Universal state sync & smart DuckDB delta transfer
 ├── strategies/
 │   ├── base_strategy.py          # Abstract strategy contract (BaseStrategy)
 │   ├── registry.py               # Dynamic strategy & version discovery engine
