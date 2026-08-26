@@ -89,8 +89,14 @@ def build_all_aggregates() -> None:
     con = duckdb.connect(str(settings.DB_PATH))
     try:
         for out_table, bucket in AGGREGATES.items():
-            con.execute(f"DROP TABLE IF EXISTS {out_table}")
-            con.execute(f"DROP VIEW IF EXISTS {out_table}")
+            try:
+                con.execute(f"DROP VIEW IF EXISTS {out_table}")
+            except Exception:
+                pass
+            try:
+                con.execute(f"DROP TABLE IF EXISTS {out_table}")
+            except Exception:
+                pass
             con.execute(
                 f"""
                 CREATE VIEW {out_table} AS
@@ -108,7 +114,6 @@ def build_all_aggregates() -> None:
             logger.info("Built real-time view %s", out_table)
     finally:
         con.close()
-
 
 def checkpoint() -> None:
     """Flush WAL to disk before file-level backups."""
