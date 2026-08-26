@@ -110,7 +110,7 @@ def sync_from_vps(vps_ip="130.210.49.136", key_path=None):
             remote_parquet = "/tmp/delta_export.parquet"
 
             export_script = f"import duckdb; con = duckdb.connect('{remote_db_path}', read_only=True); con.execute(\\\"COPY (SELECT * FROM ohlcv_1m WHERE timestamp > '{ts_str}') TO '{remote_parquet}' (FORMAT PARQUET, COMPRESSION ZSTD)\\\")"
-            remote_query = f"python3 -c \"{export_script}\""
+            remote_query = f"/home/ubuntu/trading/algotradingdaily/venv/bin/python3 -c \"{export_script}\""
 
             res_ssh = run_cmd(ssh_base + [f"ubuntu@{vps_ip}", remote_query])
             if res_ssh.returncode != 0:
