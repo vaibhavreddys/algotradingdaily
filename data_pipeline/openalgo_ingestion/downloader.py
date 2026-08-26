@@ -61,7 +61,52 @@ class ThrottledIngestionEngine:
                     close DOUBLE,
                     volume BIGINT,
                     PRIMARY KEY (timestamp, symbol, exchange)
-                )
+                );
+                
+CREATE OR REPLACE VIEW ohlcv_5m AS
+SELECT (time_bucket(INTERVAL '5 minutes', timestamp AT TIME ZONE 'Asia/Kolkata') AT TIME ZONE 'Asia/Kolkata') AS timestamp,
+       symbol, exchange,
+       arg_min(open, timestamp) AS open,
+       max(high) AS high,
+       min(low) AS low,
+       arg_max(close, timestamp) AS close,
+       sum(volume) AS volume
+FROM ohlcv_1m
+GROUP BY 1, 2, 3;
+
+CREATE OR REPLACE VIEW ohlcv_15m AS
+SELECT (time_bucket(INTERVAL '15 minutes', timestamp AT TIME ZONE 'Asia/Kolkata') AT TIME ZONE 'Asia/Kolkata') AS timestamp,
+       symbol, exchange,
+       arg_min(open, timestamp) AS open,
+       max(high) AS high,
+       min(low) AS low,
+       arg_max(close, timestamp) AS close,
+       sum(volume) AS volume
+FROM ohlcv_1m
+GROUP BY 1, 2, 3;
+
+CREATE OR REPLACE VIEW ohlcv_1h AS
+SELECT (time_bucket(INTERVAL '1 hour', timestamp AT TIME ZONE 'Asia/Kolkata') AT TIME ZONE 'Asia/Kolkata') AS timestamp,
+       symbol, exchange,
+       arg_min(open, timestamp) AS open,
+       max(high) AS high,
+       min(low) AS low,
+       arg_max(close, timestamp) AS close,
+       sum(volume) AS volume
+FROM ohlcv_1m
+GROUP BY 1, 2, 3;
+
+CREATE OR REPLACE VIEW ohlcv_1d AS
+SELECT (time_bucket(INTERVAL '1 day', timestamp AT TIME ZONE 'Asia/Kolkata') AT TIME ZONE 'Asia/Kolkata') AS timestamp,
+       symbol, exchange,
+       arg_min(open, timestamp) AS open,
+       max(high) AS high,
+       min(low) AS low,
+       arg_max(close, timestamp) AS close,
+       sum(volume) AS volume
+FROM ohlcv_1m
+GROUP BY 1, 2, 3;
+
                 """
             )
         finally:

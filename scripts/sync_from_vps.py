@@ -131,6 +131,13 @@ def sync_from_vps(vps_ip="130.210.49.136", key_path=None):
                 new_rows = count_after - count_before
                 if new_rows > 0:
                     print(f"   ✅ Appended {new_rows:,} new delta 1-minute bars! (New Max: {new_max})")
+                    # Rebuild local 15m, 5m, 1h, 1d tables automatically!
+                    try:
+                        from data_pipeline.openalgo_ingestion.archive import build_all_aggregates
+                        build_all_aggregates()
+                        print("   ✅ Rebuilt and updated all local timeframe tables (ohlcv_15m, ohlcv_5m, ohlcv_1h, ohlcv_1d)!")
+                    except Exception as agg_err:
+                        print(f"   ℹ️ Aggregate tables update skipped: {agg_err}")
                 else:
                     print("   ✅ DuckDB is already 100% up-to-date with VPS (0 new bars).")
         except Exception as e:

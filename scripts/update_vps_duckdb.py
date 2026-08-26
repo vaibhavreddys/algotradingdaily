@@ -102,6 +102,12 @@ def update_duckdb():
             start_date = str(max_t)[:10] if max_t != "MISSING" else "2026-08-22"
             engine.ingest_date_range([clean_sym], start_date=start_date, end_date=today)
 
+    # Build and update all aggregate timeframe tables (ohlcv_15m, ohlcv_5m, ohlcv_1h, ohlcv_1d)
+    print("\n📊 Rebuilding derived 15m/5m/1h/1d timeframe tables in DuckDB...")
+    from data_pipeline.openalgo_ingestion.archive import build_all_aggregates
+    build_all_aggregates()
+    print("✅ All timeframe tables (ohlcv_15m, ohlcv_5m, ohlcv_1h, ohlcv_1d) updated successfully!")
+
     # Final Report
     con = duckdb.connect(str(db_path), read_only=True)
     total_bars = con.execute("SELECT COUNT(*) FROM ohlcv_1m").fetchone()[0]
