@@ -159,9 +159,13 @@ class TestOpenAlgoIngestion(unittest.TestCase):
             self.assertIn(marker, card)
 
     def test_no_data_marks_completed_and_broker_error_marks_failed(self):
+        # A zero-row broker response no longer counts as SUCCESS — see
+        # c50ceb4 (fix(pipeline): prevent false SUCCESS marks on zero-row
+        # responses). The chunk is now recorded as EMPTY_NO_ROWS so the
+        # discrepancy-recovery loop can pick it up and retry.
         no_data_engine = self._engine({"error_type": "no_data", "message": "holiday"})
         no_data_engine.ingest_date_range(["RELIANCE"], "2026-08-20", "2026-08-20")
-        self.assertTrue(no_data_engine.is_chunk_completed("RELIANCE", "2026-08-20", "2026-08-20"))
+        self.assertFalse(no_data_engine.is_chunk_completed("RELIANCE", "2026-08-20", "2026-08-20"))
 
         error_engine = self._engine({"error_type": "invalid_symbol", "message": "bad symbol"})
         with patch.object(error_engine, "_fetch_from_broker", side_effect=RuntimeError("invalid_symbol: bad symbol")):
