@@ -374,11 +374,8 @@ class BaseTradingEngine:
             return
 
         universe_name = getattr(self.config, 'UNIVERSE', 'NIFTY50').upper()
-        if universe_name == 'NIFTY200':
-            from data_pipeline.openalgo_ingestion import get_symbols_for_universe
-            symbols = get_symbols_for_universe('NIFTY200')
-        else:
-            symbols = get_nifty50_symbols()
+        from data_pipeline.data_feed import get_symbols_for_universe
+        symbols = get_symbols_for_universe(universe_name)
         total_symbols = len(symbols)
 
         funnel_stats = {
