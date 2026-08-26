@@ -13,3 +13,4 @@ pyotp==2.10.0
 websocket-client==1.9.0
 websockets==17.0.1
 NorenRestApiPy==0.0.22
+python-telegram-bot==21.6

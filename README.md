@@ -27,6 +27,7 @@ Built with institutional-grade risk management, sub-second execution daemons, dy
   * **Mandatory 3:00 PM Squareoff**: Strict intraday position liquidation before market close.
 * **Real-Time Telegram Telemetry**:
   * Instant push notifications for qualified entry signals, +1R trailing stop movements, target hits, stop-loss hits, and 15:30 EOD PnL performance scorecards.
+  * **User-agnostic bot**: anyone with the invite code can DM the bot `/start`, enter the code, and start receiving alerts. The owner can manage subscribers from their own chat via `/subscribers`, `/pending`, `/revoke`, `/reinstate`, and `/ban`. Broadcast is share-safe — single SQLite subscribers table, no hardcoded `TELEGRAM_CHAT_ID` needed.
 * **Universal Multi-Broker Statutory Fee Engine**:
   * Models all Indian statutory taxes (STT on sell side, NSE transaction charges, SEBI turnover fees, Stamp Duty, 18% GST).
   * Evaluates real-time Net Realized ROI across 8 major Indian broker schedules (Shoonya zero-brokerage, Zerodha, Dhan, Fyers, Groww, Angel One, Upstox).
@@ -89,6 +90,24 @@ Pull the latest trade journals (`paper_trades.db`), live logs, and candle archiv
 ```powershell
 .\scripts\sync_from_vps.ps1 -KeyPath "path\to\your\oracle_key.key"
 ```
+
+### 4. Telegram Bot (long-polling worker)
+
+The bot is a separate long-running process that the cron-launched `run_daily_algo.sh` starts in the background alongside the engine. Required env on the VPS:
+
+```bash
+export TELEGRAM_BOT_TOKEN=...           # from @BotFather
+export TELEGRAM_INVITE_CODE=...         # shared with paying subscribers
+export TELEGRAM_OWNER_CHAT_ID=...       # your own chat_id (optional, enables admin commands)
+export TELEGRAM_CHAT_ID=...             # (optional) auto-seeded on first run for legacy single-user
+```
+
+To keep the bot alive 24/7 so subscribers can `/start` on weekends too, add a separate cron `@reboot` line:
+```cron
+@reboot /home/ubuntu/trading/algotradingdaily/venv/bin/python -u -m alerts.tg_bot >> /home/ubuntu/trading/algotradingdaily/telegram_bot_output.log 2>&1
+```
+
+Subscriber storage lives in `database/telegram_subscribers.db` (git-ignored, same convention as `paper_trades.db`).
 
 ---
 

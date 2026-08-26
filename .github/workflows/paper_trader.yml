@@ -83,8 +83,16 @@ jobs:
           SHOONYA_TOTP_KEY: ${{ secrets.SHOONYA_TOTP_KEY }}
           SHOONYA_IMEI: ${{ secrets.SHOONYA_IMEI }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_INVITE_CODE: ${{ secrets.TELEGRAM_INVITE_CODE }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TELEGRAM_OWNER_CHAT_ID: ${{ secrets.TELEGRAM_OWNER_CHAT_ID }}
         run: |
+          # The engine broadcasts to all active subscribers in
+          # database/telegram_subscribers.db. The bot long-polling process is
+          # NOT started here (GitHub Actions workflows are ephemeral) — for
+          # 24/7 /start discovery, run `python -m alerts.tg_bot` on a
+          # long-lived host (see README). The seeded TELEGRAM_CHAT_ID keeps
+          # the owner's own chat active during this run.
           python -u -m live_trading.paper_trader
 
       - name: 🏷️ Persist Cumulative Trade Journal to Release Asset

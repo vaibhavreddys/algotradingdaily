@@ -13,10 +13,12 @@ from alerts.base import (
     notify_eod_summary,
 )
 from alerts.telegram import TelegramAlertChannel
+from alerts.subscribers import SubscribersRegistry
 
 __all__ = [
     "BaseAlertChannel",
     "TelegramAlertChannel",
+    "SubscribersRegistry",
     "get_active_channels",
     "notify_trade_entry",
     "notify_trailing_sl",
