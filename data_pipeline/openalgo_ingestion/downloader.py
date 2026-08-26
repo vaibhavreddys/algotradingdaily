@@ -63,7 +63,9 @@ class ThrottledIngestionEngine:
                     PRIMARY KEY (timestamp, symbol, exchange)
                 );
                 
-CREATE OR REPLACE VIEW ohlcv_5m AS
+DROP TABLE IF EXISTS ohlcv_5m;
+DROP VIEW IF EXISTS ohlcv_5m;
+CREATE VIEW ohlcv_5m AS
 SELECT (time_bucket(INTERVAL '5 minutes', timestamp AT TIME ZONE 'Asia/Kolkata') AT TIME ZONE 'Asia/Kolkata') AS timestamp,
        symbol, exchange,
        arg_min(open, timestamp) AS open,
@@ -74,7 +76,9 @@ SELECT (time_bucket(INTERVAL '5 minutes', timestamp AT TIME ZONE 'Asia/Kolkata')
 FROM ohlcv_1m
 GROUP BY 1, 2, 3;
 
-CREATE OR REPLACE VIEW ohlcv_15m AS
+DROP TABLE IF EXISTS ohlcv_15m;
+DROP VIEW IF EXISTS ohlcv_15m;
+CREATE VIEW ohlcv_15m AS
 SELECT (time_bucket(INTERVAL '15 minutes', timestamp AT TIME ZONE 'Asia/Kolkata') AT TIME ZONE 'Asia/Kolkata') AS timestamp,
        symbol, exchange,
        arg_min(open, timestamp) AS open,
@@ -85,7 +89,9 @@ SELECT (time_bucket(INTERVAL '15 minutes', timestamp AT TIME ZONE 'Asia/Kolkata'
 FROM ohlcv_1m
 GROUP BY 1, 2, 3;
 
-CREATE OR REPLACE VIEW ohlcv_1h AS
+DROP TABLE IF EXISTS ohlcv_1h;
+DROP VIEW IF EXISTS ohlcv_1h;
+CREATE VIEW ohlcv_1h AS
 SELECT (time_bucket(INTERVAL '1 hour', timestamp AT TIME ZONE 'Asia/Kolkata') AT TIME ZONE 'Asia/Kolkata') AS timestamp,
        symbol, exchange,
        arg_min(open, timestamp) AS open,
@@ -96,7 +102,9 @@ SELECT (time_bucket(INTERVAL '1 hour', timestamp AT TIME ZONE 'Asia/Kolkata') AT
 FROM ohlcv_1m
 GROUP BY 1, 2, 3;
 
-CREATE OR REPLACE VIEW ohlcv_1d AS
+DROP TABLE IF EXISTS ohlcv_1d;
+DROP VIEW IF EXISTS ohlcv_1d;
+CREATE VIEW ohlcv_1d AS
 SELECT (time_bucket(INTERVAL '1 day', timestamp AT TIME ZONE 'Asia/Kolkata') AT TIME ZONE 'Asia/Kolkata') AS timestamp,
        symbol, exchange,
        arg_min(open, timestamp) AS open,
