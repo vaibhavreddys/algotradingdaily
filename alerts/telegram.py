@@ -51,11 +51,20 @@ class TelegramAlertChannel(BaseAlertChannel):
         if not self.is_configured:
             return False
 
-        chat_ids: Iterable[int] = self._registry.active_chat_ids()
+        chat_ids: list[int] = list(self._registry.active_chat_ids())
+        if not chat_ids:
+            # Fallback to TELEGRAM_OWNER_CHAT_ID or TELEGRAM_CHAT_ID from .env
+            env_chat_id = os.getenv("TELEGRAM_OWNER_CHAT_ID") or os.getenv("TELEGRAM_CHAT_ID")
+            if env_chat_id:
+                try:
+                    chat_ids = [int(env_chat_id.strip())]
+                except ValueError:
+                    pass
+                    
         if not chat_ids:
             print(
                 f"[{datetime.datetime.now().strftime('%H:%M:%S')}] "
-                "📭 [TELEGRAM] No active subscribers; alert dropped."
+                "📭 [TELEGRAM] No active subscribers and no TELEGRAM_OWNER_CHAT_ID set; alert dropped."
             )
             return False
 
