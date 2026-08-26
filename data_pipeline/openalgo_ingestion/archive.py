@@ -84,14 +84,16 @@ def count_archive_rows() -> int:
 
 
 def build_all_aggregates() -> None:
-    """Materialize 5m/15m/1h/1d tables from ohlcv_1m."""
+    """Create real-time 5m/15m/1h/1d dynamic views from ohlcv_1m."""
     duckdb = _load_duckdb()
     con = duckdb.connect(str(settings.DB_PATH))
     try:
         for out_table, bucket in AGGREGATES.items():
+            con.execute(f"DROP TABLE IF EXISTS {out_table}")
+            con.execute(f"DROP VIEW IF EXISTS {out_table}")
             con.execute(
                 f"""
-                CREATE OR REPLACE TABLE {out_table} AS
+                CREATE VIEW {out_table} AS
                 SELECT {_bucket_expr(bucket)} AS timestamp,
                        symbol, exchange,
                        arg_min(open, timestamp)  AS open,
@@ -103,7 +105,7 @@ def build_all_aggregates() -> None:
                 GROUP BY 1, 2, 3
                 """
             )
-            logger.info("Built %s", out_table)
+            logger.info("Built real-time view %s", out_table)
     finally:
         con.close()
 
