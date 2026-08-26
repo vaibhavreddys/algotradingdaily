@@ -38,6 +38,20 @@ def sync_from_vps(vps_ip="130.210.49.136", key_path=None):
     
     if not key_path:
         key_path = find_default_key()
+        
+    # If key is still not found and running interactively, prompt the user!
+    if not key_path and sys.stdin.isatty():
+        print("🔑 No SSH private key found in standard locations (~/.ssh, Downloads, Desktop).")
+        try:
+            user_input = input("👉 Enter the full path to your Oracle SSH key (.key): ").strip().strip('"').strip("'")
+            if user_input and os.path.exists(user_input):
+                key_path = user_input
+            elif user_input:
+                print(f"⚠️ File not found: {user_input}")
+        except (KeyboardInterrupt, EOFError):
+            print("
+Aborted.")
+            sys.exit(0)
 
     print("=====================================================")
     print(f" 🚀 1-Click AlgoTrading State Sync from VPS: {vps_ip}")
