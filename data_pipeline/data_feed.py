@@ -201,7 +201,10 @@ def load_candle_data(
             pass
 
     try:
-        raw_df = yf.download(symbol, period=period, interval=interval, progress=False)
+        yf_symbol = symbol
+        if not symbol.startswith("^") and not symbol.endswith(".NS"):
+            yf_symbol = f"{symbol}.NS"
+        raw_df = yf.download(yf_symbol, period=period, interval=interval, progress=False)
         if raw_df is None or raw_df.empty or len(raw_df) < 50:
             return None
 
