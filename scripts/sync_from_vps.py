@@ -143,6 +143,30 @@ def sync_from_vps(vps_ip="130.210.49.136", key_path=None):
         except Exception as e:
             print(f"   ℹ️ DuckDB delta skipped or error: {e}")
 
+    # 5. Automated Multi-Timeframe Sanity Audit on Laptop
+    if os.path.exists(local_db_path):
+        print("\n=====================================================")
+        print("       LOCAL DUCKDB SANITY AUDIT (LAPTOP)")
+        print("=====================================================")
+        try:
+            con = duckdb.connect(local_db_path, read_only=True)
+            tables = ["ohlcv_1m", "ohlcv_5m", "ohlcv_15m", "ohlcv_1h", "ohlcv_1d"]
+            today = datetime.date.today().strftime("%Y-%m-%d")
+            for tbl in tables:
+                try:
+                    total_bars = con.execute(f"SELECT COUNT(*) FROM {tbl}").fetchone()[0]
+                    distinct_syms = con.execute(f"SELECT COUNT(DISTINCT symbol) FROM {tbl}").fetchone()[0]
+                    min_ts, max_ts = con.execute(f"SELECT MIN(timestamp), MAX(timestamp) FROM {tbl}").fetchone()
+                    today_syms = con.execute(f"SELECT COUNT(DISTINCT symbol) FROM {tbl} WHERE CAST(timestamp AS DATE) = '{today}'").fetchone()[0]
+                    status_icon = "✅" if today_syms == 200 or datetime.datetime.strptime(today, "%Y-%m-%d").weekday() >= 5 else "ℹ️"
+                    print(f" {status_icon} Table {tbl:10} | Bars: {total_bars:>10,} | Symbols: {distinct_syms:>3}/200 | Latest: {max_ts} | Today: {today_syms}/200")
+                except Exception as e:
+                    print(f" ❌ Table {tbl:10} | Error: {e}")
+            con.close()
+        except Exception as audit_err:
+            print(f"   ℹ️ Local audit skipped: {audit_err}")
+        print("=====================================================")
+
     print("\n🎉 1-Click Sync Complete! Everything on your laptop is now 100% synchronized with the VPS.")
 
 if __name__ == "__main__":
