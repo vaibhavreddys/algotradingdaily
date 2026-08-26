@@ -408,22 +408,24 @@ def fetch_verified_candles(
     """
     import time
 
-    # Tier 1: OpenAlgo Unified Live Feed
+    # Tier 1: OpenAlgo Unified Live Feed (Broker)
     if api_client is not None:
         try:
             b_df = fetch_openalgo_candles(api_client, ticker, interval=interval)
             if b_df is not None and not b_df.empty and len(b_df) >= 30:
+                b_df._data_source = "Shoonya (OpenAlgo Broker Gateway)"
                 return b_df
         except Exception:
             pass
 
-    # Tier 2: Fallback Feed
+    # Tier 2: Fallback Feed (yfinance)
     for delay in retry_delays:
         if delay > 0:
             time.sleep(delay)
         try:
             df = fetch_stock_candles(ticker, period=period, interval=interval, force_refresh=True, verbose=verbose)
             if df is not None and not df.empty and len(df) >= 30:
+                df._data_source = "Network Fallback (yfinance)"
                 return df
         except Exception:
             continue
