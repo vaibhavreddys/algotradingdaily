@@ -44,7 +44,7 @@ from core.trade_db import (
     get_db_path,
     get_trade_journal,
 )
-from alerts import notify_trade_entry, notify_trailing_sl, notify_trade_exit, notify_eod_summary
+from alerts import notify_trade_entry, notify_trailing_sl, notify_trade_exit, notify_eod_summary, notify_system_error
 from strategies.vwap_stoch_breakdown import (
     STRATEGY_NAME,
     STRATEGY_VERSION,
@@ -137,11 +137,44 @@ class BaseTradingEngine:
             max_loss_pct=self.config.MAX_DAILY_LOSS_PCT
         )
 
+    @staticmethod
+    def _looks_like_auth_failure(payload: Any) -> Optional[str]:
+        """
+        Heuristic that returns a human-readable reason if a broker/OpenAlgo
+        response indicates an expired or invalid session. Returns ``None`` for
+        unrelated errors so callers can keep their existing flow.
+        """
+        if payload is None:
+            return None
+        if isinstance(payload, dict):
+            for key in ("message", "msg", "error", "reason"):
+                val = payload.get(key)
+                if isinstance(val, str) and (
+                    "session" in val.lower()
+                    and ("expir" in val.lower() or "invalid" in val.lower())
+                ):
+                    return val
+        text = str(payload)
+        lowered = text.lower()
+        if "401" in text or "unauthorized" in lowered:
+            return text
+        if "session" in lowered and ("expir" in lowered or "invalid" in lowered):
+            return text
+        return None
+
     def get_account_capital(self) -> float:
         """Returns the active available capital for position sizing."""
         if (self.mode == "live" or getattr(self.config, 'TRADING_MODE', 'paper') == "live") and self.api:
             try:
                 limits = self.api.get_limits()
+                auth_reason = self._looks_like_auth_failure(limits)
+                if auth_reason:
+                    notify_system_error(
+                        component="OpenAlgo",
+                        error_msg=f"Broker session rejected: {auth_reason}",
+                        severity="warning",
+                        action_taken="Please run the morning re-authentication script to refresh the broker API key.",
+                    )
                 if limits and limits.get('stat') == 'Ok':
                     # Check payin / cash / net fields
                     cash = float(limits.get('cash', 0.0))
@@ -201,7 +234,14 @@ class BaseTradingEngine:
             print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] ✅ Connected to OpenAlgo Unified OMS Gateway ({host}).")
             return True
         except Exception as e:
+            err_text = str(e).strip() or repr(e)
             print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] ⚠️ OpenAlgo connection failed: {e}. Running in local fallback.")
+            notify_system_error(
+                component="OpenAlgo",
+                error_msg=f"Gateway unreachable at {host}: {err_text}",
+                severity="critical",
+                action_taken="Engine fell back to yfinance market feed for this session.",
+            )
             self.authenticated = True
             return True
 
@@ -371,7 +411,23 @@ class BaseTradingEngine:
     def scan_and_execute_signals(self, nifty_pct_map: pd.Series) -> None:
         """Scans the universe across worker threads on 15m candle close boundaries."""
         if self.is_daily_circuit_breaker_active():
+            today_realized_pnl = self.get_account_capital() - self.day_starting_capital
+            loss_pct = (
+                (today_realized_pnl / self.day_starting_capital) * 100.0
+                if self.day_starting_capital > 0 else 0.0
+            )
             print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] 🛑 [CIRCUIT BREAKER] Daily Loss reached. Halting new scan entries.")
+            notify_system_error(
+                component="CircuitBreaker",
+                error_msg=(
+                    f"Daily loss cap of {self.config.MAX_DAILY_LOSS_PCT * 100:.1f}% reached "
+                    f"(realized PnL: ₹{today_realized_pnl:+,.2f} / {loss_pct:+.2f}%)."
+                ),
+                severity="halt",
+                action_taken=(
+                    "All open positions were squared off and new entries are blocked for the remainder of the session."
+                ),
+            )
             return
 
         universe_name = getattr(self.config, 'UNIVERSE', 'NIFTY50').upper()
@@ -392,7 +448,20 @@ class BaseTradingEngine:
         with ThreadPoolExecutor(max_workers=8) as executor:
             futures = [executor.submit(self._evaluate_single_symbol, t, nifty_pct_map) for t in symbols]
             for f in futures:
-                res = f.result()
+                try:
+                    res = f.result()
+                except Exception as scan_err:
+                    import traceback
+                    notify_system_error(
+                        component="EngineLoop.15mScanner",
+                        error_msg=(
+                            f"Unhandled exception in scanner worker: {scan_err}\n"
+                            f"{traceback.format_exc(limit=3).strip()}"
+                        ),
+                        severity="critical",
+                        action_taken="Symbol skipped this cycle; engine will retry on the next 15m candle.",
+                    )
+                    continue
                 if res is None:
                     continue
                 if res['rel_weak_pass']: funnel_stats['rel_weakness_passed'] += 1
@@ -428,8 +497,26 @@ class BaseTradingEngine:
             entry_p = float(row['Close'])
             sl_p, tp_p = calculate_stop_and_target(entry_price=entry_p, swing_high=swing_high, config=self.config)
 
-            # Delegate order placement to child class hook
-            self.execute_entry(symbol=sym_key, entry_price=entry_p, sl_price=sl_p, tp_price=tp_p)
+            # Delegate order placement to child class hook. Wrap so any rejection
+            # (raised exception or a False return from the child hook) is routed to
+            # the operational error channel instead of being silently swallowed.
+            try:
+                placed = self.execute_entry(symbol=sym_key, entry_price=entry_p, sl_price=sl_p, tp_price=tp_p)
+            except Exception as entry_err:
+                notify_system_error(
+                    component="OrderPlacement",
+                    error_msg=f"Exception placing entry for {sym_key}: {entry_err}",
+                    severity="rejection",
+                    action_taken="Entry skipped; signal will be re-evaluated on the next 15m candle.",
+                )
+                continue
+            if not placed:
+                notify_system_error(
+                    component="OrderPlacement",
+                    error_msg=f"Broker rejected entry order for {sym_key} @ ₹{entry_p:,.2f} (SL ₹{sl_p:,.2f}).",
+                    severity="rejection",
+                    action_taken="Check broker console for margin / freeze-quantity reasons; entry skipped for this candle.",
+                )
 
     def monitor_active_positions(self) -> None:
         """Micro 15-second guardian checking active positions for SL/TP hits & +1R Trailing SL."""
@@ -447,7 +534,17 @@ class BaseTradingEngine:
                 low = tick['low']
 
                 self.update_position(symbol=symbol, current_ltp=ltp, high=high, low=low)
-            except Exception:
+            except Exception as mon_err:
+                import traceback
+                notify_system_error(
+                    component="EngineLoop.15sGuardian",
+                    error_msg=(
+                        f"Exception while monitoring {symbol}: {mon_err}\n"
+                        f"{traceback.format_exc(limit=3).strip()}"
+                    ),
+                    severity="critical",
+                    action_taken="Position skipped this tick; guardian will retry on the next 15-second sweep.",
+                )
                 continue
 
     def squareoff_all_positions(self) -> None:

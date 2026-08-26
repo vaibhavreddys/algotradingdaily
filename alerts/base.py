@@ -36,6 +36,18 @@ class BaseAlertChannel(abc.ABC):
         """Sends an End-Of-Day performance summary."""
         pass
 
+    @abc.abstractmethod
+    def send_system_error(
+        self,
+        component: str,
+        error_msg: str,
+        severity: str = "warning",
+        action_taken: str = "",
+        cooldown_seconds: Optional[int] = None,
+    ) -> bool:
+        """Sends a throttled operational/system error notification."""
+        pass
+
 
 def get_active_channels(config: TradingConfig = CONFIG) -> List[BaseAlertChannel]:
     """
@@ -86,3 +98,28 @@ def notify_eod_summary(report_text: str, mode: str = "paper", config: TradingCon
     """Broadcasts an End-Of-Day performance report across all active channels."""
     for ch in get_active_channels(config):
         ch.send_eod_summary(report_text=report_text, mode=mode)
+
+
+def notify_system_error(
+    component: str,
+    error_msg: str,
+    severity: str = "warning",
+    action_taken: str = "",
+    cooldown_seconds: Optional[int] = None,
+    config: TradingConfig = CONFIG,
+) -> None:
+    """
+    Broadcasts a throttled operational/system error across all active channels.
+
+    Channels are expected to debounce identical ``(component, error_msg)`` pairs so
+    a sustained outage does not flood the operator's Telegram. The first occurrence
+    is dispatched immediately; identical re-occurrences are throttled per-channel.
+    """
+    for ch in get_active_channels(config):
+        ch.send_system_error(
+            component=component,
+            error_msg=error_msg,
+            severity=severity,
+            action_taken=action_taken,
+            cooldown_seconds=cooldown_seconds,
+        )
