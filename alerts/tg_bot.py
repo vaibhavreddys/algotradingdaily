@@ -20,6 +20,8 @@ Optional env:
 
 import os
 import sys
+from dotenv import load_dotenv
+load_dotenv()
 import logging
 import datetime
 from typing import Optional
