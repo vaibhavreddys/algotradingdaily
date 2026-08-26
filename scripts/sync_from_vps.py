@@ -102,8 +102,12 @@ def sync_from_vps(vps_ip="130.210.49.136", key_path=None):
             remote_parquet = "/tmp/delta_export.parquet"
 
             remote_query = f"""python3 -c "import duckdb; con = duckdb.connect(\'{remote_db_path}\', read_only=True); con.execute(\\\"COPY (SELECT * FROM ohlcv_1m WHERE timestamp > \'\'{ts_str}\'\') TO \'{remote_parquet}\' (FORMAT PARQUET, COMPRESSION ZSTD)\\\")" """
-            run_cmd(ssh_base + [f"ubuntu@{vps_ip}", remote_query])
-            run_cmd(scp_base + [f"ubuntu@{vps_ip}:{remote_parquet}", local_parquet])
+            res_ssh = run_cmd(ssh_base + [f"ubuntu@{vps_ip}", remote_query])
+            if res_ssh.returncode != 0:
+                print(f"   ⚠️ Remote Parquet Export Failed: {res_ssh.stderr.strip()}")
+            res_scp = run_cmd(scp_base + [f"ubuntu@{vps_ip}:{remote_parquet}", local_parquet])
+            if res_scp.returncode != 0:
+                print(f"   ⚠️ SCP Parquet Download Failed: {res_scp.stderr.strip()}")
 
             if os.path.exists(local_parquet) and os.path.getsize(local_parquet) > 0:
                 con = duckdb.connect(local_db_path)
