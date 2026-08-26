@@ -6,7 +6,7 @@ Seamlessly syncs EVERYTHING from VPS in 1 shot:
   3. Benchmark & Candle Archives (data_pipeline/*.csv)
   4. Smart DuckDB Sync (auto full download if missing, or tiny compressed delta if present)
 """
-import sys, os, subprocess, tempfile, argparse
+import sys, os, subprocess, tempfile, argparse, datetime
 
 # Safe Windows stdout encoding
 if hasattr(sys.stdout, 'reconfigure'):
