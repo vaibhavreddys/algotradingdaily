@@ -486,8 +486,8 @@ class BaseTradingEngine:
             ending_balance=ending_balance,
             date_str=today_date
         )
-        if day_trades:
-            notify_eod_summary(report_text=eod_msg, mode=self.mode, config=self.config)
+        # Always dispatch EOD summary scorecard to Telegram (even on 0-trade discipline days)
+        notify_eod_summary(report_text=eod_msg, mode=self.mode, config=self.config)
 
     def run_live_loop(self) -> None:
         """Universal Macro/Micro live loop driver for both Paper and Live modes."""
