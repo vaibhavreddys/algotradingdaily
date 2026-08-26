@@ -3,8 +3,15 @@ One-Click Incremental Delta Ingestion Tool for DuckDB on VPS.
 Automatically detects the latest timestamp in the database and ingests
 only the missing 1-minute bars up to the current moment.
 """
-import sys, os, datetime
+import sys, os, datetime, logging
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
+# Configure clean, live console logging so progress is visible immediately
+logging.basicConfig(
+    level=logging.INFO,
+    format="[%(asctime)s] %(levelname)s: %(message)s",
+    datefmt="%H:%M:%S"
+)
 
 from config import CONFIG
 from data_pipeline.data_feed import get_symbols_for_universe
