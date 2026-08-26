@@ -1,27 +1,46 @@
 #!/bin/bash
 # =====================================================================
-# OpenAlgo 24/7 Background Systemd Service Installer
+# OpenAlgo 24/7 Background Systemd Service Installer (Fully Portable)
 # =====================================================================
 set -e
 
+# Resolve dynamic paths from user environment
+CURRENT_USER="${USER:-$(whoami)}"
+USER_HOME="${HOME:-$(eval echo ~$CURRENT_USER)}"
 SERVICE_FILE="/etc/systemd/system/openalgo.service"
-OPENALGO_DIR="/home/ubuntu/trading/openalgo/openalgo"
 
-# Dynamic Python resolver
-if [ -f "/home/ubuntu/trading/openalgo/openalgo/venv/bin/python" ]; then
-    PYTHON_BIN="/home/ubuntu/trading/openalgo/openalgo/venv/bin/python"
-elif [ -f "/home/ubuntu/trading/openalgo/venv/bin/python" ]; then
-    PYTHON_BIN="/home/ubuntu/trading/openalgo/venv/bin/python"
-else
-    PYTHON_BIN="/home/ubuntu/trading/algotradingdaily/venv/bin/python"
-fi
-
-echo "Using Python executable: $PYTHON_BIN"
+# Dynamic directory resolution
+TRADING_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+OPENALGO_DIR="$TRADING_ROOT/openalgo/openalgo"
 
 if [ ! -d "$OPENALGO_DIR" ]; then
-    echo "Error: OpenAlgo directory not found at $OPENALGO_DIR"
+    OPENALGO_DIR="$USER_HOME/trading/openalgo/openalgo"
+fi
+
+if [ ! -d "$OPENALGO_DIR" ]; then
+    echo "⚠️ Error: OpenAlgo directory not found relative to repository or in $USER_HOME/trading/openalgo/openalgo"
     exit 1
 fi
+
+# Dynamic Python binary resolver
+if [ -n "$VIRTUAL_ENV" ] && [ -f "$VIRTUAL_ENV/bin/python" ]; then
+    PYTHON_BIN="$VIRTUAL_ENV/bin/python"
+elif [ -f "$OPENALGO_DIR/venv/bin/python" ]; then
+    PYTHON_BIN="$OPENALGO_DIR/venv/bin/python"
+elif [ -f "$TRADING_ROOT/openalgo/venv/bin/python" ]; then
+    PYTHON_BIN="$TRADING_ROOT/openalgo/venv/bin/python"
+elif [ -f "$TRADING_ROOT/algotradingdaily/venv/bin/python" ]; then
+    PYTHON_BIN="$TRADING_ROOT/algotradingdaily/venv/bin/python"
+else
+    PYTHON_BIN="$(which python3)"
+fi
+
+echo "====================================================="
+echo " Installing Portable OpenAlgo systemd Service"
+echo " User:       $CURRENT_USER"
+echo " Directory:  $OPENALGO_DIR"
+echo " Python:     $PYTHON_BIN"
+echo "====================================================="
 
 sudo bash -c "cat << EOF > $SERVICE_FILE
 [Unit]
@@ -30,7 +49,7 @@ After=network.target
 
 [Service]
 Type=simple
-User=ubuntu
+User=$CURRENT_USER
 WorkingDirectory=$OPENALGO_DIR
 ExecStart=$PYTHON_BIN app.py
 Restart=always
@@ -47,5 +66,5 @@ sudo systemctl enable openalgo.service
 sudo systemctl restart openalgo.service
 
 echo ""
-echo "OpenAlgo service successfully installed and started!"
-echo "Status: sudo systemctl status openalgo"
+echo "✅ OpenAlgo service successfully installed and started!"
+echo "   Status: sudo systemctl status openalgo"
