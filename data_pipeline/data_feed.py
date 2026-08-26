@@ -72,12 +72,21 @@ def get_nifty200_symbols() -> List[str]:
     Returns standardized list of NIFTY 200 constituent symbols.
     """
     try:
+        from data_pipeline.openalgo_ingestion.scraper import NSEConstituentFetcher
+        fetcher = NSEConstituentFetcher()
+        syms = fetcher.get_index_symbols("NIFTY200")
+        if syms and len(syms) >= 100:
+            return sorted(list(set(syms)))
+    except Exception:
+        pass
+
+    try:
         from data_pipeline.openalgo_ingestion.reader import DuckDbReader
         from data_pipeline.openalgo_ingestion.settings import DUCKDB_PATH
         reader = DuckDbReader(DUCKDB_PATH)
         syms = reader.get_available_symbols()
         if syms and len(syms) >= 100:
-            return sorted(syms)
+            return sorted(list(set(syms)))
     except Exception:
         pass
     return get_nifty50_symbols()
