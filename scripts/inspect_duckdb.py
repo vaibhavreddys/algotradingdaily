@@ -8,6 +8,13 @@ Usage:
 import sys, os, duckdb, datetime
 import pandas as pd
 
+if hasattr(sys.stdout, 'reconfigure'):
+    try:
+        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+        sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+    except Exception:
+        pass
+
 pd.set_option('display.max_columns', 10)
 pd.set_option('display.width', 1000)
 
