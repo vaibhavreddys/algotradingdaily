@@ -331,6 +331,7 @@ class BaseTradingEngine:
                 'ticker': ticker,
                 'sym_key': f"{ticker.replace('.NS', '')}-EQ",
                 'last_row': last_row,
+                'raw_df': raw_df,
                 'swing_high': swing_high,
                 'signal': bool(last_row.get('Signal', False)),
                 'rel_weak_pass': bool(last_row.get('Rel_Weakness_Pass', False)),
@@ -403,8 +404,13 @@ class BaseTradingEngine:
                     funnel_stats['final_signals'] += 1
                     candidates.append((res['ticker'], res['sym_key'], res['last_row'], res['swing_high']))
 
+        # Count feed sources used during this scan
+        broker_feeds = sum(1 for f in futures if f.result() and getattr(f.result().get('raw_df', None), '_data_source', '').startswith('Shoonya'))
+        yf_feeds = total_symbols - broker_feeds
+        feed_summary = f"Broker Gateway (OpenAlgo: {broker_feeds})" if broker_feeds > 0 else f"Fallback Network (yfinance: {yf_feeds})"
+
         # Print Funnel Telemetry
-        print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] 📊 15m Filter Funnel: "
+        print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] 📊 15m Filter Funnel [Feed: {feed_summary}]: "
               f"Universe({funnel_stats['total_universe']}) -> "
               f"RelWeak({funnel_stats['rel_weakness_passed']}) -> "
               f"VWAP({funnel_stats['vwap_passed']}) -> "
