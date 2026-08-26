@@ -3,8 +3,8 @@ One-Click Incremental Delta Ingestion Tool for DuckDB on VPS.
 Features:
   1. Per-Symbol Delta Alignment (queries each symbol's exact latest timestamp).
   2. Auto-Retries Discrepant / Lagging Symbols automatically.
-  3. Automatic Fallback Ingestion (if broker has no data for a symbol).
-  4. Full Post-Ingestion Sanity Audit & Verification Scorecard.
+  3. Rebuilds all derived timeframe tables (ohlcv_15m, ohlcv_5m, ohlcv_1h, ohlcv_1d).
+  4. Comprehensive Multi-Timeframe Sanity Audit across ALL tables (1m, 5m, 15m, 1h, 1d).
 """
 import sys, os, datetime, logging
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -64,67 +64,35 @@ def update_duckdb():
         engine.ingest_date_range([clean_sym], start_date=start_date, end_date=today)
 
     # -----------------------------------------------------------------
-    # Audit & Discrepancy Recovery Loop (Auto-Healing)
+    # Auto-Rebuild all derived aggregate tables (15m, 5m, 1h, 1d)
     # -----------------------------------------------------------------
-    print("\n=====================================================")
-    print("           AUDITING FOR DISCREPANCIES")
-    print("=====================================================")
-    con = duckdb.connect(str(db_path), read_only=True)
-    audit_rows = con.execute("""
-        SELECT symbol, COUNT(*) as bar_count, MIN(timestamp) as min_ts, MAX(timestamp) as max_ts
-        FROM ohlcv_1m
-        GROUP BY symbol
-    """).fetchall()
-    con.close()
-
-    audit_map = {sym: (count, max_ts) for sym, count, _, max_ts in audit_rows}
-    lagging_symbols = []
-
-    for sym in symbols:
-        clean_sym = sym.strip().upper()
-        info = audit_map.get(clean_sym)
-        if not info:
-            lagging_symbols.append((clean_sym, 0, "MISSING"))
-        else:
-            cnt, max_t = info
-            max_t_str = str(max_t)[:10] if max_t else ""
-            if max_t_str != today and datetime.datetime.strptime(today, "%Y-%m-%d").weekday() < 5:
-                lagging_symbols.append((clean_sym, cnt, str(max_t)))
-
-    if lagging_symbols:
-        print(f"⚠️ Found {len(lagging_symbols)} lagging symbol(s). Triggering Auto-Recovery...")
-        for clean_sym, cnt, max_t in lagging_symbols:
-            logger.warning("🔄 Re-fetching delta for lagging symbol: %s (Current: %s)", clean_sym, max_t)
-            # Remove from state db to force re-fetch
-            with sqlite3.connect(settings.STATE_DB_PATH) as s_con:
-                s_con.execute("DELETE FROM chunk_state WHERE symbol=?", (clean_sym,))
-            # Re-fetch
-            start_date = str(max_t)[:10] if max_t != "MISSING" else "2026-08-22"
-            engine.ingest_date_range([clean_sym], start_date=start_date, end_date=today)
-
-    # Build and update all aggregate timeframe tables (ohlcv_15m, ohlcv_5m, ohlcv_1h, ohlcv_1d)
     print("\n📊 Rebuilding derived 15m/5m/1h/1d timeframe tables in DuckDB...")
     from data_pipeline.openalgo_ingestion.archive import build_all_aggregates
     build_all_aggregates()
-    print("✅ All timeframe tables (ohlcv_15m, ohlcv_5m, ohlcv_1h, ohlcv_1d) updated successfully!")
+    print("✅ All timeframe tables (ohlcv_15m, ohlcv_5m, ohlcv_1h, ohlcv_1d) built successfully!")
 
-    # Final Report
-    con = duckdb.connect(str(db_path), read_only=True)
-    total_bars = con.execute("SELECT COUNT(*) FROM ohlcv_1m").fetchone()[0]
-    global_max = con.execute("SELECT MAX(timestamp) FROM ohlcv_1m").fetchone()[0]
-    final_count_up_to_date = con.execute(f"SELECT COUNT(DISTINCT symbol) FROM ohlcv_1m WHERE CAST(timestamp AS DATE) = '{today}'").fetchone()[0]
-    con.close()
-
+    # -----------------------------------------------------------------
+    # Comprehensive Multi-Timeframe Sanity Audit
+    # -----------------------------------------------------------------
     print("\n=====================================================")
-    print("🎉 FINAL INGESTION SANITY SCORECARD")
+    print("       MULTI-TIMEFRAME DATABASE SANITY AUDIT")
     print("=====================================================")
-    print(f"Total 1-Minute Bars in DuckDB : {total_bars:,}")
-    print(f"Global Latest Bar Timestamp   : {global_max}")
-    print(f"Constituents 100% Up-to-Date  : {final_count_up_to_date} / {len(symbols)}")
-    if final_count_up_to_date == len(symbols):
-        print("✅ ALL 200 constituents are verified and 100% up-to-date!")
-    else:
-        print(f"ℹ️ {final_count_up_to_date}/{len(symbols)} symbols verified with live bars today.")
+    con = duckdb.connect(str(db_path), read_only=True)
+    
+    tables = ["ohlcv_1m", "ohlcv_5m", "ohlcv_15m", "ohlcv_1h", "ohlcv_1d"]
+    
+    for tbl in tables:
+        try:
+            total_bars = con.execute(f"SELECT COUNT(*) FROM {tbl}").fetchone()[0]
+            distinct_syms = con.execute(f"SELECT COUNT(DISTINCT symbol) FROM {tbl}").fetchone()[0]
+            min_ts, max_ts = con.execute(f"SELECT MIN(timestamp), MAX(timestamp) FROM {tbl}").fetchone()
+            today_syms = con.execute(f"SELECT COUNT(DISTINCT symbol) FROM {tbl} WHERE CAST(timestamp AS DATE) = '{today}'").fetchone()[0]
+            status_icon = "✅" if today_syms == len(symbols) or datetime.datetime.strptime(today, "%Y-%m-%d").weekday() >= 5 else "ℹ️"
+            print(f" {status_icon} Table {tbl:10} | Bars: {total_bars:>10,} | Symbols: {distinct_syms:>3}/200 | Latest: {max_ts} | Today: {today_syms}/200")
+        except Exception as e:
+            print(f" ❌ Table {tbl:10} | Error: {e}")
+
+    con.close()
     print("=====================================================\n")
 
 if __name__ == "__main__":
