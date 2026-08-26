@@ -131,15 +131,15 @@ def sync_from_vps(vps_ip="130.210.49.136", key_path=None):
                 new_rows = count_after - count_before
                 if new_rows > 0:
                     print(f"   ✅ Appended {new_rows:,} new delta 1-minute bars! (New Max: {new_max})")
-                    # Rebuild local 15m, 5m, 1h, 1d tables automatically!
-                    try:
-                        from data_pipeline.openalgo_ingestion.archive import build_all_aggregates
-                        build_all_aggregates()
-                        print("   ✅ Rebuilt and updated all local timeframe tables (ohlcv_15m, ohlcv_5m, ohlcv_1h, ohlcv_1d)!")
-                    except Exception as agg_err:
-                        print(f"   ℹ️ Aggregate tables update skipped: {agg_err}")
                 else:
                     print("   ✅ DuckDB is already 100% up-to-date with VPS (0 new bars).")
+
+                # Always ensure local derived views (15m, 5m, 1h, 1d) are synchronized and live!
+                try:
+                    from data_pipeline.openalgo_ingestion.archive import build_all_aggregates
+                    build_all_aggregates()
+                except Exception as agg_err:
+                    pass
         except Exception as e:
             print(f"   ℹ️ DuckDB delta skipped or error: {e}")
 
@@ -149,6 +149,8 @@ def sync_from_vps(vps_ip="130.210.49.136", key_path=None):
         print("       LOCAL DUCKDB SANITY AUDIT (LAPTOP)")
         print("=====================================================")
         try:
+            import duckdb
+            import datetime
             con = duckdb.connect(local_db_path, read_only=True)
             tables = ["ohlcv_1m", "ohlcv_5m", "ohlcv_15m", "ohlcv_1h", "ohlcv_1d"]
             today = datetime.date.today().strftime("%Y-%m-%d")
