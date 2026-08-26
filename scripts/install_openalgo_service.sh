@@ -6,16 +6,22 @@ set -e
 
 SERVICE_FILE="/etc/systemd/system/openalgo.service"
 OPENALGO_DIR="/home/ubuntu/trading/openalgo/openalgo"
-PYTHON_BIN="/home/ubuntu/trading/openalgo/venv/bin/python"
 
-if [ ! -d "$OPENALGO_DIR" ]; then
-    echo "⚠️ Error: OpenAlgo directory not found at $OPENALGO_DIR"
-    exit 1
+# Dynamic Python resolver
+if [ -f "/home/ubuntu/trading/openalgo/openalgo/venv/bin/python" ]; then
+    PYTHON_BIN="/home/ubuntu/trading/openalgo/openalgo/venv/bin/python"
+elif [ -f "/home/ubuntu/trading/openalgo/venv/bin/python" ]; then
+    PYTHON_BIN="/home/ubuntu/trading/openalgo/venv/bin/python"
+else
+    PYTHON_BIN="/home/ubuntu/trading/algotradingdaily/venv/bin/python"
 fi
 
-echo "====================================================="
-echo " Installing OpenAlgo 24/7 systemd Service"
-echo "====================================================="
+echo "Using Python executable: $PYTHON_BIN"
+
+if [ ! -d "$OPENALGO_DIR" ]; then
+    echo "Error: OpenAlgo directory not found at $OPENALGO_DIR"
+    exit 1
+fi
 
 sudo bash -c "cat << EOF > $SERVICE_FILE
 [Unit]
@@ -41,6 +47,5 @@ sudo systemctl enable openalgo.service
 sudo systemctl restart openalgo.service
 
 echo ""
-echo "✅ OpenAlgo service successfully installed and started!"
-echo "   Status: sudo systemctl status openalgo"
-echo "   Logs:   journalctl -u openalgo -f"
+echo "OpenAlgo service successfully installed and started!"
+echo "Status: sudo systemctl status openalgo"
