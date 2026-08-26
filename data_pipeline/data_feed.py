@@ -57,6 +57,32 @@ def get_available_symbols(universe: str = "NIFTY50") -> List[str]:
     return sorted(get_nifty50_symbols())
 
 
+def get_symbols_for_universe(universe: str = "NIFTY50") -> List[str]:
+    """
+    Returns standardized list of active constituent symbols for the given universe (NIFTY50 or NIFTY200).
+    """
+    u = (universe or "NIFTY50").upper()
+    if u == "NIFTY200":
+        return get_nifty200_symbols()
+    return get_nifty50_symbols()
+
+
+def get_nifty200_symbols() -> List[str]:
+    """
+    Returns standardized list of NIFTY 200 constituent symbols.
+    """
+    try:
+        from data_pipeline.openalgo_ingestion.reader import DuckDbReader
+        from data_pipeline.openalgo_ingestion.settings import DUCKDB_PATH
+        reader = DuckDbReader(DUCKDB_PATH)
+        syms = reader.get_available_symbols()
+        if syms and len(syms) >= 100:
+            return sorted(syms)
+    except Exception:
+        pass
+    return get_nifty50_symbols()
+
+
 def get_nifty50_symbols() -> List[str]:
     """
     Fetches the live NIFTY 50 constituent list from NSE Archives.
