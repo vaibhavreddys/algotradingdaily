@@ -149,16 +149,24 @@ def calculate_stop_and_target(
     swing_high: float,
     min_sl_buffer_pct: float = MIN_SL_BUFFER_PCT,
     swing_sl_buffer_pct: float = SWING_SL_BUFFER_PCT,
-    risk_reward_ratio: float = RISK_REWARD_RATIO
+    risk_reward_ratio: float = RISK_REWARD_RATIO,
+    config: Optional[Any] = None,
+    **kwargs
 ) -> Tuple[float, float, float]:
     """Calculates SL, Target, and absolute Risk for a short trade."""
     if entry_price <= 0:
         return 0.0, 0.0, 0.0
-    sl_swing = swing_high * (1.0 + swing_sl_buffer_pct)
-    sl_min = entry_price * (1.0 + min_sl_buffer_pct)
+    
+    # If config provided, pull buffers dynamically from config
+    min_buf = getattr(config, 'MIN_SL_BUFFER_PCT', min_sl_buffer_pct) if config else min_sl_buffer_pct
+    swing_buf = getattr(config, 'SWING_SL_BUFFER_PCT', swing_sl_buffer_pct) if config else swing_sl_buffer_pct
+    rr_ratio = getattr(config, 'RISK_REWARD_RATIO', risk_reward_ratio) if config else risk_reward_ratio
+
+    sl_swing = swing_high * (1.0 + swing_buf)
+    sl_min = entry_price * (1.0 + min_buf)
     sl_price = max(sl_swing, sl_min)
     risk = sl_price - entry_price
-    target_price = entry_price - (risk * risk_reward_ratio)
+    target_price = entry_price - (risk * rr_ratio)
     return round(sl_price, 2), round(target_price, 2), round(risk, 2)
 
 

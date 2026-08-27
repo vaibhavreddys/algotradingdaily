@@ -495,7 +495,7 @@ class BaseTradingEngine:
                 continue
 
             entry_p = float(row['Close'])
-            sl_p, tp_p = calculate_stop_and_target(entry_price=entry_p, swing_high=swing_high, config=self.config)
+            sl_p, tp_p, _ = calculate_stop_and_target(entry_price=entry_p, swing_high=swing_high, config=self.config)
 
             # Delegate order placement to child class hook. Wrap so any rejection
             # (raised exception or a False return from the child hook) is routed to
