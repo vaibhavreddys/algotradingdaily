@@ -381,7 +381,16 @@ def fetch_openalgo_candles(
     try:
         hist_fn = getattr(api_client, 'history', None)
         if hist_fn:
-            res = hist_fn(symbol=clean_sym, exchange=exchange, interval=interval)
+            import datetime
+            today_str = datetime.date.today().strftime("%Y-%m-%d")
+            start_str = (datetime.date.today() - datetime.timedelta(days=days)).strftime("%Y-%m-%d")
+            res = hist_fn(
+                symbol=clean_sym,
+                exchange=exchange,
+                interval=interval,
+                start_date=start_str,
+                end_date=today_str
+            )
             if res and isinstance(res, dict) and res.get('status') == 'success':
                 bars = res.get('data', [])
                 if bars and len(bars) >= 20:
