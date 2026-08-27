@@ -38,7 +38,8 @@ def discover_strategies() -> List[Dict[str, Any]]:
             versions = []
             family_name = family_id.replace("_", " ").title()
             
-            for py_file in sorted(item.glob("v*.py")):
+            py_files = sorted(item.glob("v*.py"))
+            for py_file in py_files:
                 mod_name = py_file.stem
                 try:
                     full_module = f"strategies.{family_id}.{mod_name}"
@@ -56,12 +57,16 @@ def discover_strategies() -> List[Dict[str, Any]]:
                             "version": v_str,
                             "module": mod_name,
                             "timeframe": tf_str,
-                            "is_default": (mod_name == "v1_0")
+                            "is_default": False
                         })
                 except Exception:
                     pass
             
             if versions:
+                # Always designate the highest / latest version as the active default
+                versions[-1]["is_default"] = True
+                # Sort descending (latest version on top)
+                versions.sort(key=lambda x: x["module"], reverse=True)
                 discovered.append({
                     "id": family_id,
                     "name": family_name,

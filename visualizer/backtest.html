@@ -382,7 +382,7 @@ function updateVersionDropdown() {
     stratObj.versions.forEach(v => {
       const opt = document.createElement('option');
       opt.value = v.module;
-      opt.innerText = `${v.module} ${v.is_default ? '(Default / Baseline)' : '(Optimized)'}`;
+      opt.innerText = `${v.module} ${v.is_default ? '(Latest / Default)' : ''}`;
       if (v.is_default) opt.selected = true;
       verSel.appendChild(opt);
     });
