@@ -29,8 +29,8 @@ if hasattr(sys.stdout, 'reconfigure'):
         pass
 
 from core.charges import calculate_charges
-from core.capital import get_slot_margin, get_slot_exposure, calculate_order_quantity
-from core.risk import is_daily_loss_limit_reached
+from core.capital import get_slot_margin, get_slot_exposure
+from core.risk import calculate_risk_based_quantity, is_daily_loss_limit_reached
 from core.report import print_simulation_report, print_multi_broker_matrix
 from config import CONFIG, TradingConfig
 from data_pipeline import get_nifty50_symbols, get_available_symbols, fetch_nifty_benchmark, load_candle_data
@@ -161,14 +161,14 @@ def simulate_portfolio_execution(signals_df: pd.DataFrame, config: TradingConfig
                 sl_p = float(sig.get('Stop Loss Price', entry_p * 1.01))
                 exit_p = float(sig.get('Exit Price', entry_p * (1.0 - sig['PnL %'])))
 
-                # Dual-Guard Fixed 1% Risk Sizing (Issue #31 & #24)
-                qty = calculate_order_quantity(
+                # Dual-Guard Risk-Based Position Sizing directly from core/risk.py (Issue #31)
+                max_exp = get_slot_exposure(capital, config.MAX_CONCURRENT_POSITIONS, config.LEVERAGE_MIS)
+                qty = calculate_risk_based_quantity(
                     entry_price=entry_p,
-                    current_capital=capital,
-                    max_concurrent_positions=config.MAX_CONCURRENT_POSITIONS,
-                    leverage_mis=config.LEVERAGE_MIS,
                     sl_price=sl_p,
-                    max_risk_pct=config.MAX_RISK_PER_TRADE_PCT
+                    current_capital=capital,
+                    max_risk_pct=config.MAX_RISK_PER_TRADE_PCT,
+                    max_exposure=max_exp
                 )
 
                 if qty <= 0:
