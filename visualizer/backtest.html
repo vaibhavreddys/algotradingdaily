@@ -180,7 +180,7 @@
   <div class="backtest-ctrls">
     <div class="ctrl-item">
       <label>Strategy</label>
-      <select id="bt-strat"><option value="vwap_stoch_breakdown">VWAP-Stoch Breakdown</option></select>
+      <select id="bt-strat" onchange="updateVersionDropdown()"><option value="vwap_stoch_breakdown">VWAP-Stoch Breakdown</option></select>
     </div>
     <div class="ctrl-item">
       <label>Version</label>
@@ -365,8 +365,29 @@ async function loadStrategies() {
       opt.innerText = s.name;
       stratSel.appendChild(opt);
     });
+    updateVersionDropdown();
   } catch (e) {
     console.error("loadStrategies error:", e);
+  }
+}
+
+function updateVersionDropdown() {
+  const stratSel = document.getElementById('bt-strat');
+  const verSel = document.getElementById('bt-version');
+  if (!stratSel || !verSel) return;
+  const currentStratId = stratSel.value || 'vwap_stoch_breakdown';
+  const stratObj = strategiesList.find(s => s.id === currentStratId);
+  verSel.innerHTML = '';
+  if (stratObj && stratObj.versions && stratObj.versions.length > 0) {
+    stratObj.versions.forEach(v => {
+      const opt = document.createElement('option');
+      opt.value = v.module;
+      opt.innerText = `${v.module} ${v.is_default ? '(Default / Baseline)' : '(Optimized)'}`;
+      if (v.is_default) opt.selected = true;
+      verSel.appendChild(opt);
+    });
+  } else {
+    verSel.innerHTML = '<option value="v1_0" selected>v1_0</option><option value="v1_1">v1_1</option>';
   }
 }
 
