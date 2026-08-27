@@ -25,7 +25,6 @@ from dotenv import load_dotenv
 load_dotenv()
 import logging
 import datetime
-import requests
 from typing import Optional, List, Dict, Any, Tuple
 
 if hasattr(sys.stdout, "reconfigure"):
@@ -35,7 +34,7 @@ if hasattr(sys.stdout, "reconfigure"):
     except Exception:
         pass
 
-from telegram import Update
+from telegram import Update, BotCommand
 from telegram.ext import (
     Application,
     ApplicationBuilder,
@@ -72,10 +71,23 @@ HELP_USER = (
     "• /stop  — unsubscribe from alerts\n"
     "• /pnl — today's realized + open MTM P&L scorecard\n"
     "• /positions — currently open trades with trailing status\n"
-    "• /status — gateway heartbeat, broker session, and engine mode\n"
+    "• /status — engine heartbeat, market status, and next scan time\n"
     "• /summary — strategy lifetime journal (wins, profit factor, ROI)\n"
     "• /help  — show this message"
 )
+
+# Commands registered with Telegram via set_my_commands() at startup so that
+# typing "/" in the chat surfaces them as inline suggestions. Description
+# strings must be 3-256 chars per Bot API.
+BOT_COMMAND_LIST: List[BotCommand] = [
+    BotCommand("start", "Begin the invite-code subscription flow"),
+    BotCommand("stop", "Unsubscribe from alerts"),
+    BotCommand("pnl", "Today's realized + open MTM P&L scorecard"),
+    BotCommand("positions", "Currently open trades with trailing SL status"),
+    BotCommand("status", "Engine heartbeat, market status, next 15m scan"),
+    BotCommand("summary", "Strategy lifetime journal: wins, profit factor, ROI"),
+    BotCommand("help", "Show this help message"),
+]
 HELP_OWNER = (
     "\n\nOwner commands (only in the owner's chat):\n"
     "• /subscribers — list active subscribers\n"
@@ -304,54 +316,85 @@ def _build_positions_text(mode: str = "paper") -> str:
     return "⚡ *[ACTIVE OPEN POSITIONS]*\n" + "\n".join(lines)
 
 
-def _probe_openalgo_gateway(host: str, timeout: float = 3.0) -> Tuple[str, str]:
+def _probe_engine_heartbeat(mode: str, stale_minutes: int = 30) -> Tuple[str, str]:
     """
-    Returns (icon, status_text) for the OpenAlgo gateway heartbeat. Tries
-    a cheap HTTP GET on the host root; treats any reachable response as online
-    (including 4xx, since the gateway is up even if the path needs auth).
+    Returns (icon, status_text) for the trading engine liveness signal.
+
+    The engine's own write activity (close-and-archive to trade_history, save
+    to active_positions) is the right heartbeat in the paper flow: if the
+    loop is stalled the DB goes quiet, and if the loop is healthy it writes
+    on every entry/exit. We use the most recent trade_history.exit_time as
+    the liveness timestamp. A fresh write (within `stale_minutes`) = Active;
+    a stale one = Stalled; a DB error = Unreachable.
     """
     try:
-        res = requests.get(host, timeout=timeout)
-        return "🟢", f"Online ({host})"
-    except requests.exceptions.ConnectionError:
-        return "🔴", f"Offline — connection refused at {host}"
-    except requests.exceptions.Timeout:
-        return "🟠", f"Timeout reaching {host}"
-    except Exception as e:
-        return "🟠", f"Unreachable ({type(e).__name__}: {e})"
-
-
-def _probe_broker_session(mode: str) -> Tuple[str, str]:
-    """Returns (icon, status_text) for broker session. Paper mode always reports N/A."""
-    if mode != "live":
-        return "🟡", "Skipped (paper mode)"
-
-    host = getattr(CONFIG, "OPENALGO_HOST", "http://127.0.0.1:5000")
-    api_key = getattr(CONFIG, "OPENALGO_API_KEY", "") or os.getenv("OPENALGO_API_KEY", "")
-    try:
-        from openalgo import api as OpenAlgoClient
-    except ImportError:
-        return "🟠", "openalgo SDK not importable"
-
-    try:
-        client = OpenAlgoClient(api_key=api_key, host=host)
-        limits = client.get_limits() or {}
-        stat = (limits.get("stat") or "").lower()
-        if stat == "ok":
-            return "🟢", "Active (broker session valid)"
-        msg = limits.get("message") or limits.get("error") or "Unknown"
-        if "session" in str(msg).lower() and ("expir" in str(msg).lower() or "invalid" in str(msg).lower()):
-            return "🔴", f"Expired — {msg}"
-        return "🟠", f"Degraded — {msg}"
+        from core.trade_db import get_trade_journal
+        recent = get_trade_journal(mode=mode, limit=1)
     except Exception as e:
         return "🔴", f"Unreachable ({type(e).__name__}: {e})"
 
+    if not recent:
+        return "🟡", f"No trades yet (DB reachable, last write: never)"
+
+    last_exit = str(recent[0].get("exit_time", "")).strip()
+    if not last_exit:
+        return "🟡", f"Last trade record has no exit_time"
+
+    try:
+        last_dt = datetime.datetime.strptime(last_exit, "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        try:
+            last_dt = datetime.datetime.fromisoformat(last_exit)
+        except ValueError:
+            return "🟡", f"Last write at unparseable timestamp `{last_exit}`"
+
+    age_min = (datetime.datetime.now() - last_dt).total_seconds() / 60.0
+    if age_min <= stale_minutes:
+        return "🟢", f"Active (last write {age_min:.1f}m ago)"
+    return "🟠", f"Stalled (last write {age_min:.0f}m ago)"
+
+
+def _probe_market_status(config: TradingConfig) -> Tuple[str, str]:
+    """Returns (icon, status_text) for whether the configured market is currently open."""
+    market_key = getattr(config, "EXCHANGE_MARKET", "NSE")
+    try:
+        from core.market_calendar import is_market_open as _is_open, get_seconds_until_market_open
+        if _is_open(market_key):
+            return "🟢", f"Open ({market_key})"
+        secs = get_seconds_until_market_open(market_key)
+        reopen = (datetime.datetime.now() + datetime.timedelta(seconds=secs)).strftime("%H:%M:%S")
+        return "🔴", f"Closed — reopens at {reopen} IST"
+    except Exception as e:
+        return "🟠", f"Unknown ({type(e).__name__}: {e})"
+
+
+def _next_scan_time(config: TradingConfig) -> str:
+    """Wall-clock time of the next 15m candle close, or the market-open time if closed."""
+    market_key = getattr(config, "EXCHANGE_MARKET", "NSE")
+    try:
+        from core.market_calendar import is_market_open as _is_open
+        if not _is_open(market_key):
+            from core.market_calendar import get_seconds_until_market_open
+            secs = get_seconds_until_market_open(market_key)
+            t = datetime.datetime.now() + datetime.timedelta(seconds=secs)
+            return f"{t.strftime('%H:%M:%S')} IST (market open)"
+    except Exception:
+        return "outside trading hours"
+
+    # Market is open — round up to the next 15-minute boundary.
+    now = datetime.datetime.now()
+    remainder = now.minute % 15
+    wait = 15 - remainder if remainder != 0 else 15
+    if now.second == 0 and remainder == 0:
+        wait = 0
+    target = (now + datetime.timedelta(minutes=wait)).replace(second=0, microsecond=0)
+    return f"{target.strftime('%H:%M:%S')} IST"
+
 
 def _build_status_text(config: TradingConfig = CONFIG) -> str:
-    """Gateway + broker + engine heartbeat."""
-    host = getattr(config, "OPENALGO_HOST", "http://127.0.0.1:5000")
-    gw_icon, gw_text = _probe_openalgo_gateway(host)
-    br_icon, br_text = _probe_broker_session(config.TRADING_MODE)
+    """Engine + market heartbeat, paper-trading-centric."""
+    engine_icon, engine_text = _probe_engine_heartbeat(config.TRADING_MODE)
+    market_icon, market_text = _probe_market_status(config)
 
     universe = (config.UNIVERSE or "NIFTY50").upper()
     universe_count: Optional[int] = None
@@ -363,23 +406,13 @@ def _build_status_text(config: TradingConfig = CONFIG) -> str:
 
     universe_line = f"{universe} ({universe_count} Constituents)" if universe_count else universe
 
-    next_scan = "outside trading hours"
-    try:
-        from core.market_calendar import is_market_open as _is_open, get_seconds_until_next_candle as _secs_next
-        if _is_open(getattr(config, "EXCHANGE", "NSE")):
-            secs = _secs_next(interval_mins=15)
-            next_scan = (datetime.datetime.now() + datetime.timedelta(seconds=secs)).strftime("%H:%M:%S")
-            next_scan = f"{next_scan} IST"
-    except Exception:
-        pass
-
     return (
         f"🏥 *[SYSTEM STATUS]*\n"
         f"• Mode: `{config.TRADING_MODE.upper()} TRADING`\n"
-        f"• Gateway: {gw_icon} OpenAlgo {gw_text}\n"
-        f"• Broker Session: {br_icon} {br_text}\n"
+        f"• Engine: {engine_icon} {engine_text}\n"
+        f"• Market: {market_icon} {market_text}\n"
         f"• Universe: {universe_line}\n"
-        f"• Next 15m Scan: {next_scan}"
+        f"• Next 15m Scan: {_next_scan_time(config)}"
     )
 
 
@@ -400,7 +433,13 @@ def _build_summary_text(mode: str = "paper") -> str:
 
     gross_gains = sum(float(t.get("net_pnl", 0)) for t in wins)
     gross_losses = sum(abs(float(t.get("net_pnl", 0))) for t in losses)
-    profit_factor = (gross_gains / gross_losses) if gross_losses > 0 else 999.99
+    if gross_losses > 0:
+        profit_factor_text = f"{gross_gains / gross_losses:.2f}"
+    else:
+        # No losses → ratio is undefined; show ∞ so operators don't mistake a
+        # sentinel like 999.99 for a real number. Only meaningful when there
+        # were wins; if there are also no wins we just print "—".
+        profit_factor_text = "∞" if gross_gains > 0 else "—"
     total_net = gross_gains - gross_losses
 
     return (
@@ -408,7 +447,7 @@ def _build_summary_text(mode: str = "paper") -> str:
         f"• Total Trades: {total}\n"
         f"• Wins / Losses: {len(wins)} / {len(losses)}\n"
         f"• Win Rate: {win_rate:.2f}%\n"
-        f"• Profit Factor: {profit_factor:.2f}\n"
+        f"• Profit Factor: {profit_factor_text}\n"
         f"• Net Profit: {'+' if total_net >= 0 else '-'}₹{abs(total_net):,.2f}"
     )
 
@@ -556,6 +595,19 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 # --- entry point -----------------------------------------------------------
 
 
+async def _post_init(application: Application) -> None:
+    """
+    Application.post_init hook. Registers the bot's command list with Telegram
+    so that typing "/" in the chat surfaces inline suggestions. Best-effort:
+    a failure here (e.g. network blip) should not stop the bot from polling.
+    """
+    try:
+        await application.bot.set_my_commands(BOT_COMMAND_LIST)
+        log.info("Registered %d bot commands with Telegram.", len(BOT_COMMAND_LIST))
+    except Exception as e:
+        log.warning("Failed to register command list with Telegram: %s", e)
+
+
 def main() -> int:
     token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
     invite = os.getenv("TELEGRAM_INVITE_CODE", "").strip()
@@ -578,7 +630,7 @@ def main() -> int:
 
     log.info("Starting long-polling Telegram bot at %s", datetime.datetime.now().isoformat(timespec="seconds"))
 
-    app = ApplicationBuilder().token(token).build()
+    app = ApplicationBuilder().token(token).post_init(_post_init).build()
 
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("stop", cmd_stop))

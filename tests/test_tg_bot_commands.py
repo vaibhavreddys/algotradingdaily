@@ -11,6 +11,7 @@ are patched in the bot module so the tests run hermetically.
 import os
 import sys
 import asyncio
+import datetime
 import tempfile
 import unittest
 from unittest.mock import patch, MagicMock, AsyncMock
@@ -162,64 +163,107 @@ class TestOnDemandCommands(unittest.TestCase):
         # builder with the live config and assert the labels match what it
         # currently advertises.
         from config import CONFIG as live_config
-        with patch.object(self.tg_bot, "_probe_openalgo_gateway", return_value=("🟢", "Online (http://127.0.0.1:5000)")), \
-             patch.object(self.tg_bot, "_probe_broker_session", return_value=("🟡", "Skipped (paper mode)")):
+        with patch.object(self.tg_bot, "_probe_engine_heartbeat", return_value=("🟢", "Active (last write 1.0m ago)")), \
+             patch.object(self.tg_bot, "_probe_market_status", return_value=("🟢", "Open (NSE)")), \
+             patch.object(self.tg_bot, "_next_scan_time", return_value="10:15:00 IST"):
             text = self.tg_bot._build_status_text()
         self.assertIn("SYSTEM STATUS", text)
         self.assertIn(f"{live_config.TRADING_MODE.upper()} TRADING", text)
-        self.assertIn("🟢 OpenAlgo Online", text)
-        self.assertIn("🟡 Skipped (paper mode)", text)
+        self.assertIn("🟢 Active", text)
+        self.assertIn("🟢 Open (NSE)", text)
         self.assertIn(live_config.UNIVERSE.upper(), text)
+        self.assertIn("Next 15m Scan: 10:15:00 IST", text)
 
-    def test_status_text_offline_gateway(self):
-        with patch.object(self.tg_bot, "_probe_openalgo_gateway", return_value=("🔴", "Offline — connection refused at http://x")):
+    def test_status_text_engine_stalled(self):
+        with patch.object(self.tg_bot, "_probe_engine_heartbeat", return_value=("🟠", "Stalled (last write 60m ago)")), \
+             patch.object(self.tg_bot, "_probe_market_status", return_value=("🟢", "Open (NSE)")), \
+             patch.object(self.tg_bot, "_next_scan_time", return_value="10:15:00 IST"):
             text = self.tg_bot._build_status_text()
-        self.assertIn("🔴 OpenAlgo Offline", text)
+        self.assertIn("🟠 Stalled", text)
 
-    def test_probe_openalgo_gateway_offline(self):
-        import requests as real_requests
-        with patch.object(real_requests, "get", side_effect=real_requests.exceptions.ConnectionError("refused")):
-            icon, text = self.tg_bot._probe_openalgo_gateway("http://127.0.0.1:5000")
-        self.assertEqual(icon, "🔴")
-        self.assertIn("Offline", text)
+    def test_status_text_market_closed(self):
+        with patch.object(self.tg_bot, "_probe_engine_heartbeat", return_value=("🟢", "Active (last write 5m ago)")), \
+             patch.object(self.tg_bot, "_probe_market_status", return_value=("🔴", "Closed — reopens at 09:15:00 IST")), \
+             patch.object(self.tg_bot, "_next_scan_time", return_value="09:15:00 IST (market open)"):
+            text = self.tg_bot._build_status_text()
+        self.assertIn("🔴 Closed", text)
+        self.assertIn("reopens at 09:15:00 IST", text)
 
-    def test_probe_openalgo_gateway_timeout(self):
-        import requests as real_requests
-        with patch.object(real_requests, "get", side_effect=real_requests.exceptions.Timeout("slow")):
-            icon, text = self.tg_bot._probe_openalgo_gateway("http://127.0.0.1:5000")
-        self.assertEqual(icon, "🟠")
-        self.assertIn("Timeout", text)
-
-    def test_probe_broker_session_paper_mode(self):
-        icon, text = self.tg_bot._probe_broker_session("paper")
+    def test_probe_engine_heartbeat_no_trades_yet(self):
+        with patch("core.trade_db.get_trade_journal", return_value=[]):
+            icon, text = self.tg_bot._probe_engine_heartbeat("paper")
         self.assertEqual(icon, "🟡")
-        self.assertIn("Skipped (paper mode)", text)
+        self.assertIn("No trades yet", text)
 
-    def test_probe_broker_session_live_active(self):
-        mock_client = MagicMock()
-        mock_client.get_limits.return_value = {"stat": "Ok", "cash": 100000.0}
-        with patch.dict(sys.modules, {"openalgo": MagicMock(api=MagicMock(return_value=mock_client))}):
-            with patch("alerts.tg_bot.OpenAlgoClient", return_value=mock_client, create=True):
-                pass
-        # Direct import path used by the bot:
-        fake_module = MagicMock()
-        fake_module.api = MagicMock()
-        fake_module.api.return_value = mock_client
-        with patch.dict(sys.modules, {"openalgo": fake_module, "openalgo.api": fake_module.api}):
-            icon, text = self.tg_bot._probe_broker_session("live")
+    def test_probe_engine_heartbeat_fresh_write(self):
+        now = datetime.datetime.now()
+        with patch("core.trade_db.get_trade_journal", return_value=[
+            {"exit_time": now.strftime("%Y-%m-%d %H:%M:%S")}
+        ]):
+            icon, text = self.tg_bot._probe_engine_heartbeat("paper", stale_minutes=30)
         self.assertEqual(icon, "🟢")
         self.assertIn("Active", text)
 
-    def test_probe_broker_session_live_expired(self):
-        fake_module = MagicMock()
-        mock_client = MagicMock()
-        mock_client.get_limits.return_value = {"stat": "Not_Ok", "message": "Invalid Session Key"}
-        fake_module.api = MagicMock(return_value=mock_client)
-        with patch.dict(sys.modules, {"openalgo": fake_module, "openalgo.api": fake_module.api}):
-            icon, text = self.tg_bot._probe_broker_session("live")
+    def test_probe_engine_heartbeat_stale_write(self):
+        long_ago = datetime.datetime.now() - datetime.timedelta(hours=2)
+        with patch("core.trade_db.get_trade_journal", return_value=[
+            {"exit_time": long_ago.strftime("%Y-%m-%d %H:%M:%S")}
+        ]):
+            icon, text = self.tg_bot._probe_engine_heartbeat("paper", stale_minutes=30)
+        self.assertEqual(icon, "🟠")
+        self.assertIn("Stalled", text)
+
+    def test_probe_engine_heartbeat_db_error(self):
+        with patch("core.trade_db.get_trade_journal", side_effect=RuntimeError("db gone")):
+            icon, text = self.tg_bot._probe_engine_heartbeat("paper")
         self.assertEqual(icon, "🔴")
-        self.assertIn("Expired", text)
-        self.assertIn("Invalid Session Key", text)
+        self.assertIn("Unreachable", text)
+
+    def test_probe_market_status_open(self):
+        with patch("core.market_calendar.is_market_open", return_value=True):
+            icon, text = self.tg_bot._probe_market_status(self.tg_bot.CONFIG)
+        self.assertEqual(icon, "🟢")
+        self.assertIn("Open", text)
+
+    def test_probe_market_status_closed(self):
+        with patch("core.market_calendar.is_market_open", return_value=False), \
+             patch("core.market_calendar.get_seconds_until_market_open", return_value=3600):
+            icon, text = self.tg_bot._probe_market_status(self.tg_bot.CONFIG)
+        self.assertEqual(icon, "🔴")
+        self.assertIn("Closed", text)
+        self.assertIn("reopens at", text)
+
+    # --- set_my_commands for slash suggestions --------------------------
+
+    def test_bot_command_list_includes_all_public_commands(self):
+        commands = {c.command for c in self.tg_bot.BOT_COMMAND_LIST}
+        # All user-facing commands must be in the suggestion list.
+        for cmd in ("start", "stop", "pnl", "positions", "status", "summary", "help"):
+            self.assertIn(cmd, commands, f"/{cmd} missing from BOT_COMMAND_LIST")
+        # Owner-only admin commands are intentionally NOT advertised to all
+        # users (they wouldn't be useful as inline suggestions anyway).
+        self.assertNotIn("subscribers", commands)
+        self.assertNotIn("ban", commands)
+
+    def test_post_init_registers_commands_with_telegram(self):
+        # The Application.post_init hook should call set_my_commands so that
+        # typing "/" in the chat surfaces inline suggestions.
+        app = MagicMock()
+        app.bot.set_my_commands = AsyncMock()
+        _run(self.tg_bot._post_init(app))
+        app.bot.set_my_commands.assert_awaited_once()
+        registered = app.bot.set_my_commands.await_args.args[0]
+        self.assertEqual(len(registered), len(self.tg_bot.BOT_COMMAND_LIST))
+        names = {c.command for c in registered}
+        self.assertIn("pnl", names)
+        self.assertIn("summary", names)
+
+    def test_post_init_swallows_telegram_api_errors(self):
+        # A failure to register (network blip, etc.) must not stop the bot.
+        app = MagicMock()
+        app.bot.set_my_commands = AsyncMock(side_effect=RuntimeError("network"))
+        # Should not raise.
+        _run(self.tg_bot._post_init(app))
 
     # --- /summary builder -----------------------------------------------
 
@@ -246,13 +290,24 @@ class TestOnDemandCommands(unittest.TestCase):
         # net = 1500 - 500 = 1000
         self.assertIn("Net Profit: +₹1,000.00", text)
 
-    def test_summary_text_profit_factor_handles_no_losses(self):
+    def test_summary_text_profit_factor_uses_infinity_when_no_losses(self):
         with patch.object(self.tg_bot, "get_trade_journal", return_value=[
             {"net_pnl": 500.0},
             {"net_pnl": 1000.0},
         ]):
             text = self.tg_bot._build_summary_text()
-        self.assertIn("Profit Factor: 999.99", text)
+        self.assertIn("Profit Factor: ∞", text)
+        # Make sure the old sentinel 999.99 is gone.
+        self.assertNotIn("999.99", text)
+
+    def test_summary_text_profit_factor_dash_when_no_trades(self):
+        with patch.object(self.tg_bot, "get_trade_journal", return_value=[
+            {"net_pnl": 0.0},
+            {"net_pnl": 0.0},
+        ]):
+            text = self.tg_bot._build_summary_text()
+        # All-zero trades: gross_gains==0, gross_losses==0 → em-dash.
+        self.assertIn("Profit Factor: —", text)
 
     # --- access control --------------------------------------------------
 
@@ -311,7 +366,13 @@ class TestOnDemandCommands(unittest.TestCase):
     def test_main_registers_new_command_handlers(self):
         with patch.object(self.tg_bot, "ApplicationBuilder") as builder:
             app = MagicMock()
-            builder.return_value.token.return_value.build.return_value = app
+            # main() now chains: ApplicationBuilder().token(t).post_init(cb).build()
+            # So we need each link in the chain to return something that
+            # supports the next call.
+            chain = MagicMock()
+            chain.post_init.return_value = chain
+            chain.build.return_value = app
+            builder.return_value.token.return_value = chain
             with patch.dict(os.environ, {"TELEGRAM_BOT_TOKEN": "x", "TELEGRAM_INVITE_CODE": "y"}):
                 self.tg_bot.main()
         registered: set = set()
@@ -321,6 +382,9 @@ class TestOnDemandCommands(unittest.TestCase):
                 registered.add(cmd)
         for cmd in ("start", "stop", "help", "status", "pnl", "positions", "summary", "subscribers"):
             self.assertIn(cmd, registered, f"CommandHandler for /{cmd} not registered")
+        # post_init must have been wired to the builder (used to register
+        # the slash command list with Telegram).
+        self.assertTrue(chain.post_init.called, "post_init hook not wired into ApplicationBuilder")
 
 
 if __name__ == "__main__":
