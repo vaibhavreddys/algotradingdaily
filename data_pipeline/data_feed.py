@@ -391,14 +391,29 @@ def fetch_openalgo_candles(
                 start_date=start_str,
                 end_date=today_str
             )
-            if res and isinstance(res, dict) and res.get('status') == 'success':
-                bars = res.get('data', [])
-                if bars and len(bars) >= 20:
-                    df = pd.DataFrame(bars)
-                    df.rename(columns={'time': 'timestamp', 'open': 'Open', 'high': 'High', 'low': 'Low', 'close': 'Close', 'volume': 'Volume'}, inplace=True)
+            # OpenAlgo SDK returns either a pandas DataFrame directly or a JSON dict
+            if isinstance(res, pd.DataFrame) and not res.empty and len(res) >= 20:
+                df = res.copy()
+                col_map = {c: c.capitalize() for c in df.columns if c.lower() in ['open', 'high', 'low', 'close', 'volume']}
+                if 'time' in df.columns: col_map['time'] = 'timestamp'
+                if 'date' in df.columns: col_map['date'] = 'timestamp'
+                df.rename(columns=col_map, inplace=True)
+                if 'timestamp' in df.columns:
                     df['timestamp'] = pd.to_datetime(df['timestamp'])
                     df.sort_values('timestamp', inplace=True)
                     df.reset_index(drop=True, inplace=True)
+                return df
+            elif isinstance(res, dict) and res.get('status') == 'success':
+                bars = res.get('data', [])
+                if bars and len(bars) >= 20:
+                    df = pd.DataFrame(bars)
+                    col_map = {c: c.capitalize() for c in df.columns if c.lower() in ['open', 'high', 'low', 'close', 'volume']}
+                    if 'time' in df.columns: col_map['time'] = 'timestamp'
+                    df.rename(columns=col_map, inplace=True)
+                    if 'timestamp' in df.columns:
+                        df['timestamp'] = pd.to_datetime(df['timestamp'])
+                        df.sort_values('timestamp', inplace=True)
+                        df.reset_index(drop=True, inplace=True)
                     return df
     except Exception:
         pass
