@@ -352,7 +352,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--strategy",
         type=str,
-        default="vwap_stoch_breakdown",
+        default="vwap_stoch_trend",
         help="Strategy ID to simulate (default: vwap_stoch_breakdown)"
     )
     parser.add_argument(
