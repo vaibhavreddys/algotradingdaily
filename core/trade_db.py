@@ -177,14 +177,22 @@ def init_db(mode: Optional[str] = None) -> None:
 
 def save_active_position(
     symbol: str,
-    entry_order_id: Optional[str],
-    sl_order_id: Optional[str],
-    qty: int,
-    entry_p: float,
-    sl_p: float,
-    tp_p: float,
+    entry_order_id: Optional[str] = None,
+    sl_order_id: Optional[str] = None,
+    qty: Optional[int] = None,
+    entry_p: Optional[float] = None,
+    sl_p: Optional[float] = None,
+    tp_p: Optional[float] = None,
     order_type: str = "BO",
-    mode: str = "paper"
+    mode: str = "paper",
+    quantity: Optional[int] = None,
+    entry_price: Optional[float] = None,
+    initial_sl: Optional[float] = None,
+    current_sl: Optional[float] = None,
+    target_price: Optional[float] = None,
+    strategy_name: Optional[str] = None,
+    strategy_version: Optional[str] = None,
+    **kwargs
 ) -> None:
     """Persists a newly opened position in active_positions table with 2-decimal precision."""
     init_db(mode)
