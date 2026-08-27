@@ -200,13 +200,17 @@ def save_active_position(
     
     with get_db_connection(mode) as conn:
         cursor = conn.cursor()
+        final_qty = int(qty if qty is not None else (quantity if quantity is not None else 0))
+        final_entry = round(float(entry_p if entry_p is not None else (entry_price if entry_price is not None else 0.0)), 2)
+        final_sl = round(float(sl_p if sl_p is not None else (current_sl if current_sl is not None else (initial_sl if initial_sl is not None else 0.0))), 2)
+        final_tp = round(float(tp_p if tp_p is not None else (target_price if target_price is not None else 0.0)), 2)
         cursor.execute("""
             INSERT OR REPLACE INTO active_positions 
             (symbol, order_type, entry_order_id, sl_order_id, quantity, entry_price, initial_sl, current_sl, target_price, status, entry_time)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE', ?)
         """, (
             symbol, order_type, str(entry_order_id or ""), str(sl_order_id or ""),
-            int(qty), round(float(entry_p), 2), round(float(sl_p), 2), round(float(sl_p), 2), round(float(tp_p), 2), now_str
+            final_qty, final_entry, final_sl, final_sl, final_tp, now_str
         ))
         conn.commit()
 
