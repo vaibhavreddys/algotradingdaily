@@ -222,11 +222,21 @@ def simulate_single_trade(
             break
 
     if exit_t:
+        exit_p = float(df.loc[exit_t, 'Close']) if exit_t in df.index else entry_p * (1.0 - pnl_pct)
+        if result == TradeExitReason.SL_HIT:
+            exit_p = sl
+        elif result == TradeExitReason.TRAILING_SL_HIT:
+            exit_p = entry_p
+        elif result == TradeExitReason.TARGET_HIT:
+            exit_p = tp
         return {
             'Symbol': ticker,
             'Entry Time': entry_t,
-            'Entry Price': entry_p,
+            'Entry Price': round(entry_p, 2),
+            'Stop Loss Price': round(sl, 2),
+            'Target Price': round(tp, 2),
             'Exit Time': exit_t,
+            'Exit Price': round(exit_p, 2),
             'PnL %': pnl_pct,
             'Result': result
         }

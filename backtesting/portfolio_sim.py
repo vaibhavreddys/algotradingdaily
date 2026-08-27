@@ -29,7 +29,7 @@ if hasattr(sys.stdout, 'reconfigure'):
         pass
 
 from core.charges import calculate_charges
-from core.capital import get_slot_margin, get_slot_exposure
+from core.capital import get_slot_margin, get_slot_exposure, calculate_order_quantity
 from core.risk import is_daily_loss_limit_reached
 from core.report import print_simulation_report, print_multi_broker_matrix
 from config import CONFIG, TradingConfig
@@ -157,23 +157,41 @@ def simulate_portfolio_execution(signals_df: pd.DataFrame, config: TradingConfig
                 continue
 
             if len(active_trades) < config.MAX_CONCURRENT_POSITIONS:
-                # Dynamically split CURRENT accumulated capital equally across configured slots
-                slot_margin = get_slot_margin(capital, config.MAX_CONCURRENT_POSITIONS)
-                trade_exposure = get_slot_exposure(capital, config.MAX_CONCURRENT_POSITIONS, config.LEVERAGE_MIS)
+                entry_p = float(sig.get('Entry Price', 0.0))
+                sl_p = float(sig.get('Stop Loss Price', entry_p * 1.01))
+                exit_p = float(sig.get('Exit Price', entry_p * (1.0 - sig['PnL %'])))
 
-                sell_turnover = trade_exposure
-                buy_turnover = trade_exposure * (1.0 - sig['PnL %'])
+                # Dual-Guard Fixed 1% Risk Sizing (Issue #31 & #24)
+                qty = calculate_order_quantity(
+                    entry_price=entry_p,
+                    current_capital=capital,
+                    max_concurrent_positions=config.MAX_CONCURRENT_POSITIONS,
+                    leverage_mis=config.LEVERAGE_MIS,
+                    sl_price=sl_p,
+                    max_risk_pct=config.MAX_RISK_PER_TRADE_PCT
+                )
+
+                if qty <= 0:
+                    continue
+
+                sell_turnover = entry_p * qty
+                buy_turnover = exit_p * qty
+                trade_exposure = sell_turnover
+                slot_margin = sell_turnover / config.LEVERAGE_MIS
 
                 trade_cost = calculate_charges(sell_turnover, buy_turnover)
                 total_charges_paid += trade_cost
 
-                raw_pnl = trade_exposure * sig['PnL %']
+                raw_pnl = (entry_p - exit_p) * qty
                 net_pnl = raw_pnl - trade_cost
                 capital += net_pnl
 
                 t_dict = {
                     'Symbol': sig['Symbol'], 'Entry Time': sig['Entry Time'],
                     'Exit Time': sig['Exit Time'], 'PnL %': sig['PnL %'] * 100,
+                    'Quantity': qty,
+                    'Entry Price': entry_p,
+                    'Exit Price': exit_p,
                     'Slot Margin (₹)': slot_margin, 'Exposure (₹)': trade_exposure,
                     'Gross PnL (₹)': raw_pnl, 'Net PnL (₹)': net_pnl,
                     'net_pnl': net_pnl,
@@ -248,6 +266,7 @@ def run_portfolio_simulation(
         initial_capital=active_cfg.INITIAL_CAPITAL,
         config=active_cfg
     )
+    return tdf, ending_capital, total_charges
 
 
 def run_interactive_wizard() -> dict:
