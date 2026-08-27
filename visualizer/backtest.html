@@ -106,6 +106,39 @@
       transition: background 0.2s;
     }
     .btn-run:hover { background: #1e4bd8; }
+    .btn-run:disabled { background: #3b4253; cursor: not-allowed; opacity: 0.85; }
+    .spinner {
+      width: 14px;
+      height: 14px;
+      border: 2px solid rgba(255,255,255,0.3);
+      border-radius: 50%;
+      border-top-color: #fff;
+      animation: spin 0.8s linear infinite;
+      display: inline-block;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* Progress Banner Overlay */
+    .sim-progress-banner {
+      display: none;
+      background: linear-gradient(90deg, rgba(41,98,255,0.15), rgba(38,166,154,0.15));
+      border: 1px solid var(--accent);
+      border-radius: 8px;
+      padding: 14px 20px;
+      width: 100%;
+      box-sizing: border-box;
+      align-items: center;
+      justify-content: space-between;
+      gap: 15px;
+      animation: pulseBanner 2s ease-in-out infinite;
+    }
+    @keyframes pulseBanner {
+      0%, 100% { border-color: rgba(41,98,255,0.6); }
+      50% { border-color: rgba(38,166,154,0.9); }
+    }
+    .sim-progress-left { display: flex; align-items: center; gap: 12px; font-size: 13.5px; font-weight: 600; color: #fff; }
+    .sim-progress-steps { font-size: 12px; color: var(--muted); }
+
 
     /* KPI Row */
     .kpi-row { display: grid; grid-template-columns: repeat(6, 1fr); gap: 12px; width: 100%; box-sizing: border-box; }
@@ -172,7 +205,19 @@
       <label>Capital (₹)</label>
       <input type="number" id="bt-capital" value="100000" min="1000" step="1000">
     </div>
-    <button class="btn-run" id="bt-run-btn" onclick="runBacktest()">▶️ Run Simulation</button>
+    <button class="btn-run" id="bt-run-btn" onclick="runBacktest()"><span id="btn-icon">▶️</span> <span id="btn-text">Run Simulation</span></button>
+  </div>
+
+  <!-- Live Simulation Progress Banner -->
+  <div class="sim-progress-banner" id="sim-progress-banner">
+    <div class="sim-progress-left">
+      <div class="spinner" style="width:18px;height:18px;border-width:2.5px;"></div>
+      <div>
+        <div id="sim-stage-title">Executing Multi-Stock Portfolio Simulation...</div>
+        <div class="sim-progress-steps" id="sim-stage-desc">Scanning 200 constituents with Relative Weakness against NIFTY benchmark & applying dual-guard 1% risk engine...</div>
+      </div>
+    </div>
+    <div style="font-size:12px; color:var(--muted); font-family:monospace;" id="sim-timer">0s elapsed</div>
   </div>
 
   <!-- KPI Row 1: Core Financials & Returns -->
@@ -337,8 +382,27 @@ async function runBacktest() {
   }
 
   const btn = document.getElementById('bt-run-btn');
+  const btnIcon = document.getElementById('btn-icon');
+  const btnText = document.getElementById('btn-text');
+  const banner = document.getElementById('sim-progress-banner');
+  const timerEl = document.getElementById('sim-timer');
+  const descEl = document.getElementById('sim-stage-desc');
+
   btn.disabled = true;
-  btn.innerText = '⏳ Simulating...';
+  if (btnIcon) btnIcon.innerHTML = '<div class="spinner"></div>';
+  if (btnText) btnText.innerText = 'Simulating...';
+  if (banner) banner.style.display = 'flex';
+
+  let startTime = Date.now();
+  let timerInterval = setInterval(() => {
+    const secs = Math.floor((Date.now() - startTime) / 1000);
+    if (timerEl) timerEl.innerText = `${secs}s elapsed`;
+    if (secs > 5 && secs <= 15 && descEl) {
+      descEl.innerText = `Ingesting DuckDB 15m candle store & computing Relative Weakness vs NIFTY... (${secs}s)`;
+    } else if (secs > 15 && descEl) {
+      descEl.innerText = `Simulating chronological multi-slot execution with 1% fixed risk & statutory charges... (${secs}s)`;
+    }
+  }, 500);
 
   const payload = {
     strategy_id: document.getElementById('bt-strat').value || 'vwap_stoch_breakdown',
@@ -457,8 +521,11 @@ async function runBacktest() {
   } catch (e) {
     alert("Error running simulation: " + e);
   } finally {
+    clearInterval(timerInterval);
+    if (banner) banner.style.display = 'none';
     btn.disabled = false;
-    btn.innerText = '▶️ Run Simulation';
+    if (btnIcon) btnIcon.innerText = '▶️';
+    if (btnText) btnText.innerText = 'Run Simulation';
   }
 }
 
