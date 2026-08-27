@@ -30,7 +30,7 @@ if hasattr(sys.stdout, 'reconfigure'):
 
 from core.charges import calculate_charges
 from core.capital import get_slot_margin, get_slot_exposure
-from core.risk import is_daily_loss_limit_reached
+from core.risk import calculate_risk_based_quantity, is_daily_loss_limit_reached
 from core.report import print_simulation_report, print_multi_broker_matrix
 from config import CONFIG, TradingConfig
 from data_pipeline import get_nifty50_symbols, get_available_symbols, fetch_nifty_benchmark, load_candle_data
@@ -44,12 +44,15 @@ from strategies.vwap_stoch_breakdown import (
 from strategies.registry import discover_strategies, load_strategy_instance
 
 
-def _scan_single_symbol(ticker, nifty_pct_map, config: TradingConfig, refresh: bool):
+def _scan_single_symbol(ticker, nifty_pct_map, config: TradingConfig, refresh: bool, strategy_module=None):
     """
     Worker: loads candles, evaluates indicators, and simulates all trades for one symbol.
     Returns (ticker, trades). Owns its DataFrame exclusively -> thread-safe.
     """
     try:
+        eval_fn = getattr(strategy_module, 'evaluate_signals', evaluate_signals) if strategy_module else evaluate_signals
+        sim_fn = getattr(strategy_module, 'simulate_single_trade', simulate_single_trade) if strategy_module else simulate_single_trade
+
         raw_df = load_candle_data(
             ticker,
             period=getattr(config, 'BACKTEST_PERIOD', '60d'),
@@ -60,7 +63,7 @@ def _scan_single_symbol(ticker, nifty_pct_map, config: TradingConfig, refresh: b
         if raw_df is None:
             return ticker, []
 
-        df = evaluate_signals(raw_df, nifty_pct_map, config=config)
+        df = eval_fn(raw_df, nifty_pct_map, config=config)
         if df is None:
             return ticker, []
 
@@ -70,7 +73,7 @@ def _scan_single_symbol(ticker, nifty_pct_map, config: TradingConfig, refresh: b
 
         trades = []
         for i in signal_indices:
-            trade = simulate_single_trade(df, i, ticker, config=config)
+            trade = sim_fn(df, i, ticker, config=config)
             if trade:
                 trades.append(trade)
         return ticker, trades
@@ -78,7 +81,7 @@ def _scan_single_symbol(ticker, nifty_pct_map, config: TradingConfig, refresh: b
         return ticker, []
 
 
-def scan_universe_signals(symbols, nifty_pct_map, config: TradingConfig = CONFIG, refresh: bool = False):
+def scan_universe_signals(symbols, nifty_pct_map, config: TradingConfig = CONFIG, refresh: bool = False, strategy_module=None):
     """
     Scans all stock symbols in parallel and compiles candidate trade signals sorted chronologically.
     """
@@ -91,7 +94,7 @@ def scan_universe_signals(symbols, nifty_pct_map, config: TradingConfig = CONFIG
 
     with ThreadPoolExecutor(max_workers=8) as executor:
         futures = {
-            ticker: executor.submit(_scan_single_symbol, ticker, nifty_pct_map, config, refresh)
+            ticker: executor.submit(_scan_single_symbol, ticker, nifty_pct_map, config, refresh, strategy_module)
             for ticker in symbols
         }
 
@@ -157,23 +160,41 @@ def simulate_portfolio_execution(signals_df: pd.DataFrame, config: TradingConfig
                 continue
 
             if len(active_trades) < config.MAX_CONCURRENT_POSITIONS:
-                # Dynamically split CURRENT accumulated capital equally across configured slots
-                slot_margin = get_slot_margin(capital, config.MAX_CONCURRENT_POSITIONS)
-                trade_exposure = get_slot_exposure(capital, config.MAX_CONCURRENT_POSITIONS, config.LEVERAGE_MIS)
+                entry_p = float(sig.get('Entry Price', 0.0))
+                sl_p = float(sig.get('Stop Loss Price', entry_p * 1.01))
+                exit_p = float(sig.get('Exit Price', entry_p * (1.0 - sig['PnL %'])))
 
-                sell_turnover = trade_exposure
-                buy_turnover = trade_exposure * (1.0 - sig['PnL %'])
+                # Dual-Guard Risk-Based Position Sizing directly from core/risk.py (Issue #31)
+                max_exp = get_slot_exposure(capital, config.MAX_CONCURRENT_POSITIONS, config.LEVERAGE_MIS)
+                qty = calculate_risk_based_quantity(
+                    entry_price=entry_p,
+                    sl_price=sl_p,
+                    current_capital=capital,
+                    max_risk_pct=config.MAX_RISK_PER_TRADE_PCT,
+                    max_exposure=max_exp
+                )
+
+                if qty <= 0:
+                    continue
+
+                sell_turnover = entry_p * qty
+                buy_turnover = exit_p * qty
+                trade_exposure = sell_turnover
+                slot_margin = sell_turnover / config.LEVERAGE_MIS
 
                 trade_cost = calculate_charges(sell_turnover, buy_turnover)
                 total_charges_paid += trade_cost
 
-                raw_pnl = trade_exposure * sig['PnL %']
+                raw_pnl = (entry_p - exit_p) * qty
                 net_pnl = raw_pnl - trade_cost
                 capital += net_pnl
 
                 t_dict = {
                     'Symbol': sig['Symbol'], 'Entry Time': sig['Entry Time'],
                     'Exit Time': sig['Exit Time'], 'PnL %': sig['PnL %'] * 100,
+                    'Quantity': qty,
+                    'Entry Price': entry_p,
+                    'Exit Price': exit_p,
                     'Slot Margin (₹)': slot_margin, 'Exposure (₹)': trade_exposure,
                     'Gross PnL (₹)': raw_pnl, 'Net PnL (₹)': net_pnl,
                     'net_pnl': net_pnl,
@@ -219,7 +240,7 @@ def run_portfolio_simulation(
         force_refresh=refresh,
         universe=universe
     )
-    signals_df = scan_universe_signals(symbols, nifty_pct_map, config=active_cfg, refresh=refresh)
+    signals_df = scan_universe_signals(symbols, nifty_pct_map, config=active_cfg, refresh=refresh, strategy_module=strategy)
 
     tdf, ending_capital, total_charges, _, _ = simulate_portfolio_execution(
         signals_df=signals_df,
@@ -248,6 +269,7 @@ def run_portfolio_simulation(
         initial_capital=active_cfg.INITIAL_CAPITAL,
         config=active_cfg
     )
+    return tdf, ending_capital, total_charges
 
 
 def run_interactive_wizard() -> dict:

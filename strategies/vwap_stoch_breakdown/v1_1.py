@@ -37,9 +37,9 @@ class VWAPStochBreakdownStrategy(BaseStrategy):
     SWING_HIGH_BARS: int = 3            # 3-bar swing high lookback
     MIN_SL_BUFFER_PCT: float = 0.0020   # 0.2% min SL buffer above entry
     SWING_SL_BUFFER_PCT: float = 0.0005 # 0.05% anti-wick buffer above swing high
-    RISK_REWARD_RATIO: float = 2.0      # 1:2 R:R target
+    RISK_REWARD_RATIO: float = 2.5      # 1:2 R:R target
     ADX_PERIOD: int = 14
-    ADX_THRESHOLD: float = 25.0
+    ADX_THRESHOLD: float = 28.0
     RSI_PERIOD: int = 14
     STOCH_PERIOD: int = 14
     STOCH_K_PERIOD: int = 3
