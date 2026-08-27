@@ -11,6 +11,7 @@ from alerts.base import (
     notify_trailing_sl,
     notify_trade_exit,
     notify_eod_summary,
+    notify_system_error,
 )
 from alerts.telegram import TelegramAlertChannel
 from alerts.subscribers import SubscribersRegistry
@@ -24,4 +25,5 @@ __all__ = [
     "notify_trailing_sl",
     "notify_trade_exit",
     "notify_eod_summary",
+    "notify_system_error",
 ]

@@ -8,13 +8,25 @@ deprecated no-op so existing call sites keep importing.
 """
 
 import os
+import threading
 import requests
 import datetime
 import warnings
-from typing import Optional, Iterable
+from typing import Optional, Iterable, Dict
 
 from alerts.base import BaseAlertChannel
 from alerts.subscribers import SubscribersRegistry
+
+# Default cooldown for repeated operational-error alerts.
+DEFAULT_SYSTEM_ERROR_COOLDOWN_SEC = 15 * 60
+
+# Severity → emoji map. Unknown severities fall back to the warning glyph.
+_SEVERITY_ICON = {
+    "critical": "🚨",
+    "warning": "⚠️",
+    "halt": "🛑",
+    "rejection": "❌",
+}
 
 
 class TelegramAlertChannel(BaseAlertChannel):
@@ -34,6 +46,11 @@ class TelegramAlertChannel(BaseAlertChannel):
                 stacklevel=2,
             )
         self._registry = SubscribersRegistry()
+        # Throttle state for operational-error alerts. Keyed by (component, error_msg);
+        # values are UTC timestamps of the most recent dispatch.
+        self._error_throttle: Dict[str, datetime.datetime] = {}
+        self._error_throttle_lock = threading.Lock()
+        self._error_cooldown_seconds = DEFAULT_SYSTEM_ERROR_COOLDOWN_SEC
 
     @property
     def is_configured(self) -> bool:
@@ -115,6 +132,69 @@ class TelegramAlertChannel(BaseAlertChannel):
             )
 
     # --- typed helpers -----------------------------------------------------
+
+    def send_system_error(
+        self,
+        component: str,
+        error_msg: str,
+        severity: str = "warning",
+        action_taken: str = "",
+        cooldown_seconds: Optional[int] = None,
+    ) -> bool:
+        """
+        Dispatches a throttled operational/system error to all active subscribers.
+
+        Args:
+            component: short subsystem label (e.g. "OpenAlgo", "EngineLoop", "CircuitBreaker").
+            error_msg: human-readable error description. Combined with ``component`` to form
+                the throttle key, so two distinct errors from the same component each get
+                their own debounce window.
+            severity: one of ``"critical"`` (🚨), ``"warning"`` (⚠️), ``"halt"`` (🛑),
+                ``"rejection"`` (❌). Unknown values fall back to the warning glyph.
+            action_taken: optional recovery / mitigation note included in the message body.
+            cooldown_seconds: override the default 15-minute cooldown (mainly for tests).
+
+        Returns:
+            True when the message was dispatched, False when throttled, when no token
+            is configured, or when delivery failed.
+        """
+        component = (component or "Unknown").strip()
+        error_msg = (error_msg or "Unspecified error").strip()
+        severity_key = (severity or "warning").strip().lower()
+        icon = _SEVERITY_ICON.get(severity_key, "⚠️")
+        cooldown = (
+            cooldown_seconds
+            if cooldown_seconds is not None
+            else self._error_cooldown_seconds
+        )
+
+        throttle_key = f"{component}::{error_msg}"
+        now = datetime.datetime.now()
+        with self._error_throttle_lock:
+            last_sent = self._error_throttle.get(throttle_key)
+            if last_sent is not None and (now - last_sent).total_seconds() < cooldown:
+                # Suppressed by the debounce window. We still surface a log line so the
+                # operator can see the alert was caught and intentionally not re-sent.
+                print(
+                    f"[{now.strftime('%H:%M:%S')}] 🔇 [TELEGRAM] Suppressed repeat "
+                    f"system-error alert ({severity_key}/{component}) — "
+                    f"cooldown {cooldown}s not elapsed."
+                )
+                return False
+            self._error_throttle[throttle_key] = now
+
+        action_block = (
+            f"\n• *Action Taken:* {action_taken.strip()}"
+            if action_taken and action_taken.strip()
+            else ""
+        )
+        msg = (
+            f"{icon} *[{severity_key.upper()} ALERT]* `{component}`\n"
+            f"• *Time:* `{now.strftime('%Y-%m-%d %H:%M:%S')}`\n"
+            f"• *Error:* {error_msg}"
+            f"{action_block}"
+        )
+        return self.send_message(msg)
 
     def send_trade_entry(self, symbol: str, price: float, sl: float, tp: float, qty: int, mode: str = "paper") -> bool:
         msg = (
