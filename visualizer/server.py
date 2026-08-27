@@ -93,7 +93,7 @@ def run_backtest_api(payload: dict) -> dict:
         MAX_DAILY_LOSS_PCT=CONFIG.MAX_DAILY_LOSS_PCT
     )
 
-    signals_df = scan_universe_signals(symbols, bench_map, config=custom_cfg)
+    signals_df = scan_universe_signals(symbols, bench_map, config=custom_cfg, strategy_module=strategy)
     tdf, ending_capital, total_charges, _, _ = simulate_portfolio_execution(
         signals_df=signals_df,
         config=custom_cfg
