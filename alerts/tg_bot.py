@@ -316,17 +316,18 @@ def _build_positions_text(mode: str = "paper") -> str:
     return "⚡ *[ACTIVE OPEN POSITIONS]*\n" + "\n".join(lines)
 
 
-def _probe_engine_heartbeat(mode: str, stale_minutes: int = 30) -> Tuple[str, str]:
+def _probe_engine_heartbeat(mode: str, stale_minutes: int = 30, config: Optional[TradingConfig] = None) -> Tuple[str, str]:
     """
     Returns (icon, status_text) for the trading engine liveness signal.
-
-    The engine's own write activity (close-and-archive to trade_history, save
-    to active_positions) is the right heartbeat in the paper flow: if the
-    loop is stalled the DB goes quiet, and if the loop is healthy it writes
-    on every entry/exit. We use the most recent trade_history.exit_time as
-    the liveness timestamp. A fresh write (within `stale_minutes`) = Active;
-    a stale one = Stalled; a DB error = Unreachable.
+    When market is closed and day completed cleanly, marks as 'Sleeping (Session Ended)'.
     """
+    try:
+        market_key = getattr(config or CONFIG, "EXCHANGE_MARKET", "NSE")
+        from core.market_calendar import is_market_open
+        market_is_open = is_market_open(market_key)
+    except Exception:
+        market_is_open = True
+
     try:
         from core.trade_db import get_trade_journal
         recent = get_trade_journal(mode=mode, limit=1)
@@ -334,11 +335,11 @@ def _probe_engine_heartbeat(mode: str, stale_minutes: int = 30) -> Tuple[str, st
         return "🔴", f"Unreachable ({type(e).__name__}: {e})"
 
     if not recent:
-        return "🟡", f"No trades yet (DB reachable, last write: never)"
+        return "🟢", "Idle (0 trades recorded)"
 
     last_exit = str(recent[0].get("exit_time", "")).strip()
     if not last_exit:
-        return "🟡", f"Last trade record has no exit_time"
+        return "🟢", "Ready"
 
     try:
         last_dt = datetime.datetime.strptime(last_exit, "%Y-%m-%d %H:%M:%S")
@@ -346,9 +347,11 @@ def _probe_engine_heartbeat(mode: str, stale_minutes: int = 30) -> Tuple[str, st
         try:
             last_dt = datetime.datetime.fromisoformat(last_exit)
         except ValueError:
-            return "🟡", f"Last write at unparseable timestamp `{last_exit}`"
+            return "⚪", f"Last write at unparseable timestamp `{last_exit}`"
 
     age_min = (datetime.datetime.now() - last_dt).total_seconds() / 60.0
+    if not market_is_open:
+        return "🟢", f"Sleeping (Session ended, last write {age_min:.0f}m ago)"
     if age_min <= stale_minutes:
         return "🟢", f"Active (last write {age_min:.1f}m ago)"
     return "🟠", f"Stalled (last write {age_min:.0f}m ago)"
@@ -376,12 +379,13 @@ def _probe_market_status(config: TradingConfig) -> Tuple[str, str]:
     """Returns (icon, status_text) for whether the configured market is currently open."""
     market_key = getattr(config, "EXCHANGE_MARKET", "NSE")
     try:
-        from core.market_calendar import is_market_open as _is_open, get_seconds_until_market_open
+        from core.market_calendar import is_market_open as _is_open, get_next_market_session
         if _is_open(market_key):
             return "🟢", f"Open ({market_key})"
-        secs = get_seconds_until_market_open(market_key)
-        reopen = (datetime.datetime.now() + datetime.timedelta(seconds=secs)).strftime("%I:%M:%S %p")
-        return "🔴", f"Closed — reopens at {reopen} IST"
+        next_dt, _ = get_next_market_session(market_key)
+        day_str = next_dt.strftime("%a, %b %d")
+        time_str = next_dt.strftime("%I:%M:%S %p")
+        return "🔴", f"Closed (Reopens {day_str} at {time_str} IST)"
     except Exception as e:
         return "⚪", f"Unknown ({type(e).__name__}: {e})"
 
@@ -417,7 +421,7 @@ def _next_scan_time(config: TradingConfig) -> str:
 
 def _build_status_text(config: TradingConfig = CONFIG) -> str:
     """Engine + market heartbeat, active strategy, capital and broker connection status."""
-    engine_icon, engine_text = _probe_engine_heartbeat(config.TRADING_MODE)
+    engine_icon, engine_text = _probe_engine_heartbeat(config.TRADING_MODE, config=config)
     market_icon, market_text = _probe_market_status(config)
     broker_tag = _probe_broker_connection(config)
     strat_name = "VWAP-Stoch Trend"
