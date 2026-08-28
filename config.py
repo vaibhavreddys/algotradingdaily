@@ -93,7 +93,7 @@ class TradingConfig:
     # -------------------------------------------------------------------------
     # Capital & Portfolio Risk Sizing
     # -------------------------------------------------------------------------
-    INITIAL_CAPITAL: float = 10000.0
+    INITIAL_CAPITAL: float = 100000.0
     MAX_CONCURRENT_POSITIONS: int = 2
     LEVERAGE_MIS: int = 5
     MAX_RISK_PER_TRADE_PCT: float = 0.01  # 1% fixed capital risk per trade

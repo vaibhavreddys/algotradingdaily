@@ -84,33 +84,25 @@ def calculate_order_quantity(
 
 
 def get_persisted_paper_capital(
-    initial_capital: float = 10000.0,
+    initial_capital: Optional[float] = None,
     mode: str = "paper"
 ) -> float:
     """
-    Reconstructs the cumulative paper trading account balance by summing initial capital
-    with all historical realized net PnL from the local SQLite trade journal.
-
-    Args:
-        initial_capital: Starting seed capital in INR (default: 10,000.0).
-        mode: Database mode ('paper' or 'live').
-
-    Returns:
-        Current real-time accumulated capital balance in INR.
+    Reconstructs the cumulative trading account balance dynamically by summing
+    initial seed capital from configuration with all historical realized net PnL.
     """
     try:
         from core.trade_db import get_db_connection, init_db
+        if initial_capital is None:
+            from config import CONFIG
+            initial_capital = getattr(CONFIG, 'INITIAL_CAPITAL', 100000.0)
         init_db(mode)
         with get_db_connection(mode) as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT balance_after_trade FROM trade_history ORDER BY id DESC LIMIT 1;")
-            row = cursor.fetchone()
-            if row and row[0] is not None:
-                return float(row[0])
             cursor.execute("SELECT SUM(net_pnl) FROM trade_history;")
             cum_sum = cursor.fetchone()[0]
             if cum_sum is not None:
-                return initial_capital + float(cum_sum)
-        return initial_capital
+                return round(initial_capital + float(cum_sum), 2)
+        return float(initial_capital)
     except Exception:
-        return initial_capital
+        return float(initial_capital if initial_capital is not None else 100000.0)

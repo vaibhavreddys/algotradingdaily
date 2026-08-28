@@ -226,6 +226,23 @@ class LiveTradingEngine(BaseTradingEngine):
             pnl_pct = (entry_p - exit_price) / entry_p * 100
             actual_exit_time = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
+            # Fetch real-time available margin balance directly from broker API
+            broker_balance = None
+            if self.api:
+                try:
+                    limits = self.api.get_limits()
+                    if limits and limits.get('stat') == 'Ok':
+                        cash = float(limits.get('cash', 0.0))
+                        payin = float(limits.get('payin', 0.0))
+                        margin_used = float(limits.get('marginused', 0.0))
+                        net_avail = (cash + payin) - margin_used
+                        if net_avail > 0:
+                            broker_balance = round(net_avail, 2)
+                        elif 'net' in limits:
+                            broker_balance = round(float(limits['net']), 2)
+                except Exception:
+                    pass
+
             close_and_archive_position(
                 symbol=symbol,
                 exit_price=exit_price,
@@ -234,6 +251,7 @@ class LiveTradingEngine(BaseTradingEngine):
                 gross_pnl=gross_pnl,
                 taxes_fees=charges,
                 net_pnl=net_pnl,
+                balance_after_trade=broker_balance,
                 mode="live"
             )
 

@@ -237,6 +237,7 @@ def close_and_archive_position(
     gross_pnl: float,
     taxes_fees: float,
     net_pnl: float,
+    balance_after_trade: Optional[float] = None,
     mode: str = "paper"
 ) -> bool:
     """
@@ -258,17 +259,14 @@ def close_and_archive_position(
             
         pos_dict = dict(pos)
         
-        # 2. Fetch previous balance_after_trade to maintain atomic ledger
-        cursor.execute("SELECT balance_after_trade FROM trade_history ORDER BY id DESC LIMIT 1;")
-        last_row = cursor.fetchone()
-        if last_row and last_row[0] is not None:
-            prev_balance = float(last_row[0])
+        # 2. Determine balance_after_trade: use explicit broker balance if provided, else compute dynamically
+        if balance_after_trade is not None:
+            new_balance = round(float(balance_after_trade), 2)
         else:
             cursor.execute("SELECT SUM(net_pnl) FROM trade_history;")
             cum_sum = cursor.fetchone()[0]
-            prev_balance = CONFIG.INITIAL_CAPITAL + (float(cum_sum) if cum_sum is not None else 0.0)
-
-        new_balance = round(prev_balance + float(net_pnl), 2)
+            cum_pnl = float(cum_sum) if cum_sum is not None else 0.0
+            new_balance = round(CONFIG.INITIAL_CAPITAL + cum_pnl + float(net_pnl), 2)
 
         # 3. Insert into permanent trade_history
         cursor.execute("""
