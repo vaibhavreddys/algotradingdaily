@@ -454,7 +454,8 @@ def _build_status_text(config: TradingConfig = CONFIG) -> str:
         f"• Engine: {engine_icon} {engine_text}\n"
         f"• Market: {market_icon} {market_text}\n"
         f"• Universe: {universe_line}\n"
-        f"• Next Alert / Scan: {next_scan}"
+        f"• Next Alert / Scan: {next_scan}\n\n"
+        "🧙‍♂️ _\"May the force be with you!\"_"
     )
 
 
