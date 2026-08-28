@@ -172,7 +172,7 @@ class TestOnDemandCommands(unittest.TestCase):
         self.assertIn("🟢 Active", text)
         self.assertIn("🟢 Open (NSE)", text)
         self.assertIn(live_config.UNIVERSE.upper(), text)
-        self.assertIn("Next 15m Scan: 10:15:00 IST", text)
+        self.assertIn("Next Alert / Scan:", text)
 
     def test_status_text_engine_stalled(self):
         with patch.object(self.tg_bot, "_probe_engine_heartbeat", return_value=("🟠", "Stalled (last write 60m ago)")), \

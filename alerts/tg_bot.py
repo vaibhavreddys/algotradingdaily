@@ -354,6 +354,24 @@ def _probe_engine_heartbeat(mode: str, stale_minutes: int = 30) -> Tuple[str, st
     return "🟠", f"Stalled (last write {age_min:.0f}m ago)"
 
 
+def _probe_broker_connection(config: TradingConfig) -> str:
+    """Returns formatted broker connection status inside brackets, e.g. (🟢 Broker: Shoonya Connected)."""
+    broker_name = (getattr(config, "ACTIVE_BROKER", "shoonya") or "Shoonya").title()
+    host = getattr(config, "OPENALGO_HOST", "http://127.0.0.1:5000")
+    api_key = getattr(config, "OPENALGO_API_KEY", "")
+    if not api_key:
+        return "(🟡 Broker: Standalone / Skipped)"
+    try:
+        from openalgo import api as OpenAlgoClient
+        client = OpenAlgoClient(api_key=api_key, host=host)
+        funds = client.funds()
+        if isinstance(funds, dict) and funds.get("status") == "error":
+            return f"(🔴 Broker: {broker_name} Auth Failed)"
+        return f"(🟢 Broker: {broker_name} Connected)"
+    except Exception:
+        return f"(⚪ Broker: {broker_name} Offline)"
+
+
 def _probe_market_status(config: TradingConfig) -> Tuple[str, str]:
     """Returns (icon, status_text) for whether the configured market is currently open."""
     market_key = getattr(config, "EXCHANGE_MARKET", "NSE")
@@ -362,57 +380,77 @@ def _probe_market_status(config: TradingConfig) -> Tuple[str, str]:
         if _is_open(market_key):
             return "🟢", f"Open ({market_key})"
         secs = get_seconds_until_market_open(market_key)
-        reopen = (datetime.datetime.now() + datetime.timedelta(seconds=secs)).strftime("%H:%M:%S")
+        reopen = (datetime.datetime.now() + datetime.timedelta(seconds=secs)).strftime("%I:%M:%S %p")
         return "🔴", f"Closed — reopens at {reopen} IST"
     except Exception as e:
-        return "🟠", f"Unknown ({type(e).__name__}: {e})"
+        return "⚪", f"Unknown ({type(e).__name__}: {e})"
 
 
 def _next_scan_time(config: TradingConfig) -> str:
-    """Wall-clock time of the next 15m candle close, or the market-open time if closed."""
+    """Wall-clock time of next 15m scan or upcoming market session warmup boundary."""
     market_key = getattr(config, "EXCHANGE_MARKET", "NSE")
     try:
-        from core.market_calendar import is_market_open as _is_open
-        if not _is_open(market_key):
-            from core.market_calendar import get_seconds_until_market_open
-            secs = get_seconds_until_market_open(market_key)
-            t = datetime.datetime.now() + datetime.timedelta(seconds=secs)
-            return f"{t.strftime('%H:%M:%S')} IST (market open)"
+        from core.market_calendar import is_market_open, is_entry_window_active, get_next_market_session, get_strategy_entry_window
+        now = datetime.datetime.now()
+        if is_market_open(market_key):
+            if is_entry_window_active(market_key):
+                remainder = now.minute % 15
+                wait = 15 - remainder if remainder != 0 else 15
+                if now.second == 0 and remainder == 0: wait = 0
+                target = (now + datetime.timedelta(minutes=wait)).replace(second=0, microsecond=0)
+                return f"⏱️ Today at {target.strftime('%I:%M:%S %p')} IST"
+            else:
+                start_w, _ = get_strategy_entry_window(market_key)
+                if now.time() < (start_w or datetime.time(10, 0)):
+                    return f"⏱️ Today at {start_w.strftime('%I:%M:%S %p') if start_w else '10:00:00 AM'} IST (Warmup End)"
+                return "⏱️ Today at 03:00:00 PM IST (Auto-Squareoff Check)"
+        else:
+            next_open, _ = get_next_market_session(market_key)
+            start_w, _ = get_strategy_entry_window(market_key)
+            warmup_dt = next_open.replace(hour=start_w.hour, minute=start_w.minute, second=0) if start_w else next_open
+            day_str = warmup_dt.strftime("%a, %b %d")
+            time_str = warmup_dt.strftime("%I:%M:%S %p")
+            return f"🗓️ {day_str} at {time_str} IST"
     except Exception:
         return "outside trading hours"
 
-    # Market is open — round up to the next 15-minute boundary.
-    now = datetime.datetime.now()
-    remainder = now.minute % 15
-    wait = 15 - remainder if remainder != 0 else 15
-    if now.second == 0 and remainder == 0:
-        wait = 0
-    target = (now + datetime.timedelta(minutes=wait)).replace(second=0, microsecond=0)
-    return f"{target.strftime('%H:%M:%S')} IST"
-
 
 def _build_status_text(config: TradingConfig = CONFIG) -> str:
-    """Engine + market heartbeat, paper-trading-centric."""
+    """Engine + market heartbeat, active strategy, capital and broker connection status."""
     engine_icon, engine_text = _probe_engine_heartbeat(config.TRADING_MODE)
     market_icon, market_text = _probe_market_status(config)
-
+    broker_tag = _probe_broker_connection(config)
+    strat_name = "VWAP-Stoch Trend"
+    strat_ver = "v1.1"
+    timeframe = getattr(config, "TIMEFRAME", "15m")
+    try:
+        from strategies.vwap_stoch_trend import STRATEGY_NAME, STRATEGY_VERSION
+        strat_name = STRATEGY_NAME
+        v_raw = str(STRATEGY_VERSION).replace('v', '').replace('_', '.')
+        strat_ver = f"v{v_raw}"
+    except Exception:
+        pass
+    strategy_line = f"{strat_name} {strat_ver} ({timeframe})"
+    from core.capital import get_persisted_paper_capital
+    cap = get_persisted_paper_capital(initial_capital=config.INITIAL_CAPITAL, mode=config.TRADING_MODE)
     universe = (config.UNIVERSE or "NIFTY50").upper()
-    universe_count: Optional[int] = None
+    universe_count = None
     try:
         from data_pipeline.data_feed import get_symbols_for_universe
         universe_count = len(get_symbols_for_universe(universe))
     except Exception:
-        universe_count = None
-
+        pass
     universe_line = f"{universe} ({universe_count} Constituents)" if universe_count else universe
-
+    next_scan = _next_scan_time(config)
     return (
-        f"🏥 *[SYSTEM STATUS]*\n"
-        f"• Mode: `{config.TRADING_MODE.upper()} TRADING`\n"
+        "🏥 *[SYSTEM STATUS]*\n"
+        f"• Mode: `{config.TRADING_MODE.upper()} TRADING` {broker_tag}\n"
+        f"• Strategy: `{strategy_line}`\n"
+        f"• Account Capital: ₹{cap:,.2f}\n"
         f"• Engine: {engine_icon} {engine_text}\n"
         f"• Market: {market_icon} {market_text}\n"
         f"• Universe: {universe_line}\n"
-        f"• Next 15m Scan: {_next_scan_time(config)}"
+        f"• Next Alert / Scan: {next_scan}"
     )
 
 
