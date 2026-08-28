@@ -190,31 +190,35 @@ class TestOnDemandCommands(unittest.TestCase):
         self.assertIn("reopens at 09:15:00 IST", text)
 
     def test_probe_engine_heartbeat_no_trades_yet(self):
-        with patch("core.trade_db.get_trade_journal", return_value=[]):
+        with patch("core.market_calendar.is_market_open", return_value=True), \
+             patch("core.trade_db.get_trade_journal", return_value=[]):
             icon, text = self.tg_bot._probe_engine_heartbeat("paper")
-        self.assertEqual(icon, "🟡")
-        self.assertIn("No trades yet", text)
+        self.assertEqual(icon, "🟢")
+        self.assertIn("Idle", text)
 
     def test_probe_engine_heartbeat_fresh_write(self):
         now = datetime.datetime.now()
-        with patch("core.trade_db.get_trade_journal", return_value=[
-            {"exit_time": now.strftime("%Y-%m-%d %H:%M:%S")}
-        ]):
+        with patch("core.market_calendar.is_market_open", return_value=True), \
+             patch("core.trade_db.get_trade_journal", return_value=[
+                 {"exit_time": now.strftime("%Y-%m-%d %H:%M:%S")}
+             ]):
             icon, text = self.tg_bot._probe_engine_heartbeat("paper", stale_minutes=30)
         self.assertEqual(icon, "🟢")
         self.assertIn("Active", text)
 
     def test_probe_engine_heartbeat_stale_write(self):
         long_ago = datetime.datetime.now() - datetime.timedelta(hours=2)
-        with patch("core.trade_db.get_trade_journal", return_value=[
-            {"exit_time": long_ago.strftime("%Y-%m-%d %H:%M:%S")}
-        ]):
+        with patch("core.market_calendar.is_market_open", return_value=True), \
+             patch("core.trade_db.get_trade_journal", return_value=[
+                 {"exit_time": long_ago.strftime("%Y-%m-%d %H:%M:%S")}
+             ]):
             icon, text = self.tg_bot._probe_engine_heartbeat("paper", stale_minutes=30)
         self.assertEqual(icon, "🟠")
         self.assertIn("Stalled", text)
 
     def test_probe_engine_heartbeat_db_error(self):
-        with patch("core.trade_db.get_trade_journal", side_effect=RuntimeError("db gone")):
+        with patch("core.market_calendar.is_market_open", return_value=True), \
+             patch("core.trade_db.get_trade_journal", side_effect=RuntimeError("db gone")):
             icon, text = self.tg_bot._probe_engine_heartbeat("paper")
         self.assertEqual(icon, "🔴")
         self.assertIn("Unreachable", text)
@@ -226,12 +230,11 @@ class TestOnDemandCommands(unittest.TestCase):
         self.assertIn("Open", text)
 
     def test_probe_market_status_closed(self):
-        with patch("core.market_calendar.is_market_open", return_value=False), \
-             patch("core.market_calendar.get_seconds_until_market_open", return_value=3600):
+        with patch("core.market_calendar.is_market_open", return_value=False):
             icon, text = self.tg_bot._probe_market_status(self.tg_bot.CONFIG)
         self.assertEqual(icon, "🔴")
         self.assertIn("Closed", text)
-        self.assertIn("reopens at", text)
+        self.assertIn("Reopens", text)
 
     # --- set_my_commands for slash suggestions --------------------------
 
