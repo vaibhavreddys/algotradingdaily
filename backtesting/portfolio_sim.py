@@ -164,28 +164,29 @@ def simulate_portfolio_execution(signals_df: pd.DataFrame, config: TradingConfig
                 sl_p = float(sig.get('Stop Loss Price', entry_p * 1.01))
                 exit_p = float(sig.get('Exit Price', entry_p * (1.0 - sig['PnL %'])))
 
-                # Dual-Guard Risk-Based Position Sizing directly from core/risk.py (Issue #31)
+                # Option A: Full 5x MIS Slot Exposure Allocation
                 max_exp = get_slot_exposure(capital, config.MAX_CONCURRENT_POSITIONS, config.LEVERAGE_MIS)
-                qty = calculate_risk_based_quantity(
-                    entry_price=entry_p,
-                    sl_price=sl_p,
-                    current_capital=capital,
-                    max_risk_pct=config.MAX_RISK_PER_TRADE_PCT,
-                    max_exposure=max_exp
-                )
+                qty = int(np.floor(max_exp / entry_p)) if entry_p > 0 else 0
 
                 if qty <= 0:
                     continue
 
-                sell_turnover = entry_p * qty
-                buy_turnover = exit_p * qty
-                trade_exposure = sell_turnover
-                slot_margin = sell_turnover / config.LEVERAGE_MIS
+                direction = str(sig.get('Direction', 'SHORT')).upper()
+                if direction == 'LONG':
+                    buy_turnover = entry_p * qty
+                    sell_turnover = exit_p * qty
+                    raw_pnl = (exit_p - entry_p) * qty
+                else:
+                    sell_turnover = entry_p * qty
+                    buy_turnover = exit_p * qty
+                    raw_pnl = (entry_p - exit_p) * qty
+
+                trade_exposure = entry_p * qty
+                slot_margin = trade_exposure / config.LEVERAGE_MIS
 
                 trade_cost = calculate_charges(sell_turnover, buy_turnover)
                 total_charges_paid += trade_cost
 
-                raw_pnl = (entry_p - exit_p) * qty
                 net_pnl = raw_pnl - trade_cost
                 capital += net_pnl
 

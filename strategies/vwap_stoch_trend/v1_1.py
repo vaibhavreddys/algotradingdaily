@@ -1,18 +1,57 @@
 """
-strategies/vwap_stoch_trend/v1_1.py
-Bi-Directional VWAP + Stochastic RSI Intraday Trend Strategy (v1.1).
+================================================================================
+STRATEGY SPECIFICATION & ARCHITECTURE
+================================================================================
+Strategy Name       : VWAP-Stoch Trend
+Version             : 1.1.0 (Regime & Overextension Filtered Trend)
+Author / Owner      : Algorithmic Trading Team
+Status              : Production / Active
 
-Refinements in v1.1:
-  1. NIFTY Macro Regime Point Filter:
-     - Long only when NIFTY is positive by > +30 points from day open.
-     - Short only when NIFTY is negative by > -30 points from day open.
-  2. Overextension Filter:
-     - Stock must not have moved more than 2.0% intraday before signal bar.
-  3. Core Momentum & Trend:
-     - Relative Strength / Weakness vs NIFTY benchmark.
-     - Price position relative to VWAP.
-     - Stochastic RSI oversold/overbought hook confirmation.
-     - ADX(14) > 25.0 trend strength.
+1. CORE SETUP & UNIVERSE
+--------------------------------------------------------------------------------
+Primary Timeframe   : 15m (15-Minute Candles)
+Trading Universe    : NIFTY 200 (Constituents with DuckDB / Live Stream)
+Direction           : Bidirectional (Long & Short)
+Benchmark Reference : NIFTY 50 / NIFTY 200 Composite (% Change from Open)
+
+2. INDICATORS & PARAMETERS
+--------------------------------------------------------------------------------
+Indicators Used     : 1. VWAP (Intraday Volume Weighted Average Price)
+                      2. Stochastic RSI (K=14, D=3, Stoch=14, RSI=14)
+                      3. ADX (Period=14, Trend Threshold >= 25.0)
+                      4. Relative Strength / Weakness vs. Benchmark
+                      5. NIFTY Macro Regime Point Filter (Long > +30 pts, Short < -30 pts)
+                      6. Overextension Guard (Stock Intraday Move <= 2.0%)
+
+3. TIMING & SESSION CONSTRAINTS
+--------------------------------------------------------------------------------
+Market Open Warmup  : 10:00 AM IST (Warmup minutes = 45 after 09:15)
+Entry Cutoff Time   : 01:30 PM IST (Cutoff minutes = 120 before 15:30)
+Mandatory Square-off: 03:00 PM IST (All intraday positions auto-squared off)
+
+4. ENTRY & EXIT RULES
+--------------------------------------------------------------------------------
+Long Entry Rules    : - NIFTY Index up by > +30 points from market open
+                      - Stock Intraday move <= 2.0% (not overextended)
+                      - Stock Intraday % > Benchmark Intraday % (Relative Strength)
+                      - Close > VWAP
+                      - Stoch RSI oversold hook (Stoch_K_prev <= 20 and Stoch_K > 20)
+                      - ADX(14) >= 25.0
+Short Entry Rules   : - NIFTY Index down by > -30 points from market open
+                      - Stock Intraday move <= 2.0% (not overextended)
+                      - Stock Intraday % < Benchmark Intraday % (Relative Weakness)
+                      - Close < VWAP
+                      - Stoch RSI overbought hook (Stoch_K_prev >= 80 and Stoch_K < 80)
+                      - ADX(14) >= 25.0
+Exit Target (TP)    : 1:1.5 Risk-to-Reward Ratio
+Stop Loss (SL)      : 3-bar Swing Low - 0.05% (Longs) / 3-bar Swing High + 0.05% (Shorts)
+Trailing Stop Loss  : Move SL to Breakeven (+0.1% buffer) once trade gains +1.0R profit
+
+5. RISK MANAGEMENT & SIZING
+--------------------------------------------------------------------------------
+Position Sizing     : Equal-Split Slot Margin with 5x MIS Leverage (2 Concurrent Slots)
+Max Concurrent Slots: 2 Active Positions
+================================================================================
 """
 
 import datetime

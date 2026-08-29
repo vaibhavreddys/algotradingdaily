@@ -1,21 +1,51 @@
 """
-strategies/vwap_stoch_trend/v1_0.py
-Bi-Directional VWAP + Stochastic RSI Intraday Trend Strategy (v1.0).
+================================================================================
+STRATEGY SPECIFICATION & ARCHITECTURE
+================================================================================
+Strategy Name       : VWAP-Stoch Trend
+Version             : 1.0.0 (Bidirectional Momentum Baseline)
+Author / Owner      : Algorithmic Trading Team
+Status              : Production / Active
 
-Core Philosophy:
-  1. Long Signals:
-     - Relative Strength vs NIFTY: Stock Intraday Pct > NIFTY Intraday Pct
-     - Price > Intraday VWAP
-     - Strong Trend: ADX(14) > 25.0
-     - Stochastic RSI Bullish Momentum: Stoch K > Stoch D and Stoch K > 20
-     - Exit Target: 1:2.0 Risk-Reward Ratio | SL: Swing Low - 0.05% buffer
+1. CORE SETUP & UNIVERSE
+--------------------------------------------------------------------------------
+Primary Timeframe   : 15m (15-Minute Candles)
+Trading Universe    : NIFTY 200 (Constituents with DuckDB / Live Stream)
+Direction           : Bidirectional (Long & Short)
+Benchmark Reference : NIFTY 50 / NIFTY 200 Composite (% Change from Open)
 
-  2. Short Signals:
-     - Relative Weakness vs NIFTY: Stock Intraday Pct < NIFTY Intraday Pct
-     - Price < Intraday VWAP
-     - Strong Trend: ADX(14) > 25.0
-     - Stochastic RSI Bearish Breakdown: Stoch K < Stoch D and Stoch K < 80
-     - Exit Target: 1:2.0 Risk-Reward Ratio | SL: Swing High + 0.05% buffer
+2. INDICATORS & PARAMETERS
+--------------------------------------------------------------------------------
+Indicators Used     : 1. VWAP (Intraday Volume Weighted Average Price)
+                      2. Stochastic RSI (K=14, D=3, Stoch=14, RSI=14)
+                      3. ADX (Period=14, Trend Threshold >= 25.0)
+                      4. Relative Strength & Weakness vs. Benchmark
+
+3. TIMING & SESSION CONSTRAINTS
+--------------------------------------------------------------------------------
+Market Open Warmup  : 10:00 AM IST (Warmup minutes = 45 after 09:15)
+Entry Cutoff Time   : 01:30 PM IST (Cutoff minutes = 120 before 15:30)
+Mandatory Square-off: 03:00 PM IST (All intraday positions auto-squared off)
+
+4. ENTRY & EXIT RULES
+--------------------------------------------------------------------------------
+Long Entry Rules    : - Stock % from Day Open > Benchmark % from Day Open (Rel Strength)
+                      - Close > VWAP
+                      - Stoch RSI K > Stoch RSI D and Stoch K > 20
+                      - ADX(14) >= 25.0
+Short Entry Rules   : - Stock % from Day Open < Benchmark % from Day Open (Rel Weakness)
+                      - Close < VWAP
+                      - Stoch RSI K < Stoch RSI D and Stoch K < 80
+                      - ADX(14) >= 25.0
+Exit Target (TP)    : 1:2.0 Risk-to-Reward Ratio
+Stop Loss (SL)      : 3-bar Swing Low - 0.05% (Longs) / 3-bar Swing High + 0.05% (Shorts)
+Trailing Stop Loss  : Move SL to Breakeven (+0.1% buffer) once trade gains +1.0R profit
+
+5. RISK MANAGEMENT & SIZING
+--------------------------------------------------------------------------------
+Position Sizing     : Equal-Split Slot Margin with 5x MIS Leverage (2 Concurrent Slots)
+Max Concurrent Slots: 2 Active Positions
+================================================================================
 """
 
 import datetime

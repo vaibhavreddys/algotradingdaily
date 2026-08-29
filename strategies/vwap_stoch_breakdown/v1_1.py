@@ -1,14 +1,51 @@
 """
-VWAP-Stochastic RSI Breakdown Strategy.
+================================================================================
+STRATEGY SPECIFICATION & ARCHITECTURE
+================================================================================
+Strategy Name       : VWAP-Stoch Breakdown
+Version             : 1.1.0 (Regime & Overextension Filtered Short)
+Author / Owner      : Algorithmic Trading Team
+Status              : Production / Active
 
-Quantitative Intraday Short Strategy:
-  - Timeframe: 15-minute candles
-  - Entry Window: Configured via market calendar warmup/cutoff offsets (10:00 to 13:30 on NSE)
-  - Core Indicators: VWAP, Stochastic RSI, ADX(14)
-  - Macro Filter: NIFTY 50 Relative Weakness
-  - Stop-Loss: 3-bar Swing High + 0.05% anti-wick buffer (min 0.2% above entry)
-  - Profit Target: 1:2 Risk-Reward Ratio
-  - Trailing Stop: +1R profit moves SL to Breakeven
+1. CORE SETUP & UNIVERSE
+--------------------------------------------------------------------------------
+Primary Timeframe   : 15m (15-Minute Candles)
+Trading Universe    : NIFTY 200 / F&O Equities
+Direction           : Short Only (Intraday Breakdown)
+Benchmark Reference : NIFTY 50 / NIFTY 200 Composite (% Change from Open)
+
+2. INDICATORS & PARAMETERS
+--------------------------------------------------------------------------------
+Indicators Used     : 1. VWAP (Intraday Volume Weighted Average Price)
+                      2. Stochastic RSI (K=14, D=3, Stoch=14, RSI=14)
+                      3. ADX (Period=14, Trend Threshold >= 25.0)
+                      4. Relative Weakness vs. Benchmark (Stock % < Benchmark %)
+                      5. NIFTY Macro Regime Point Filter (< -30 pts)
+                      6. Overextension Guard (Stock Intraday Move <= 2.0%)
+
+3. TIMING & SESSION CONSTRAINTS
+--------------------------------------------------------------------------------
+Market Open Warmup  : 10:00 AM IST (Warmup minutes = 45 after 09:15)
+Entry Cutoff Time   : 01:30 PM IST (Cutoff minutes = 120 before 15:30)
+Mandatory Square-off: 03:00 PM IST (All intraday positions auto-squared off)
+
+4. ENTRY & EXIT RULES
+--------------------------------------------------------------------------------
+Entry Conditions    : - NIFTY Index down by > -30 points from market open
+                      - Stock not overextended (has not fallen > 2.0% prior to entry)
+                      - Stock Intraday % < Benchmark Intraday % (Relative Weakness)
+                      - Close < VWAP
+                      - Stoch RSI K crosses below Stoch RSI D and Stoch K < 80
+                      - ADX(14) >= 25.0
+Exit Target (TP)    : 1:2.0 Risk-to-Reward Ratio from entry price
+Stop Loss (SL)      : 3-bar Swing High + 0.05% anti-wick buffer (min 0.2% above entry)
+Trailing Stop Loss  : Move SL to Breakeven (+0.1% buffer) once trade gains +1.0R profit
+
+5. RISK MANAGEMENT & SIZING
+--------------------------------------------------------------------------------
+Position Sizing     : Equal-Split Slot Margin with 5x MIS Leverage (2 Concurrent Slots)
+Max Concurrent Slots: 2 Active Positions
+================================================================================
 """
 
 import datetime
