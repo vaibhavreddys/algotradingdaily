@@ -16,6 +16,10 @@ import yfinance as yf
 import pandas as pd
 from typing import List, Optional, Dict, Any, Tuple
 
+
+# Global benchmark in-memory cache to avoid recomputing 5,391-bar DuckDB multi-CTE aggregations
+_BENCHMARK_CACHE: dict = {}
+
 from data_pipeline.openalgo_ingestion import settings
 from data_pipeline.openalgo_ingestion.reader import BacktestDataReader
 
@@ -227,6 +231,9 @@ def fetch_nifty_benchmark(
     universe: str = "NIFTY50",
     **kwargs
 ) -> pd.Series:
+    cache_key = f"{interval}_{universe}"
+    if not force_refresh and cache_key in _BENCHMARK_CACHE:
+        return _BENCHMARK_CACHE[cache_key]
     """
     Retrieves Benchmark for Relative Weakness calculation:
       - If DuckDB exists, builds high-fidelity equal-weighted market index over the full DuckDB historical span.
@@ -284,7 +291,9 @@ def fetch_nifty_benchmark(
                     res_df['timestamp'] = reader._normalize_timestamp(res_df['timestamp'])
                     res_df = res_df.set_index('timestamp')
                     print(f"  🦆 Benchmark generated dynamically from DuckDB ({table_name} | {len(res_df)} candles)")
-                    return res_df['avg_pct']
+                    series = res_df['avg_pct']
+                    _BENCHMARK_CACHE[cache_key] = series
+                    return series
         except Exception:
             pass
 
