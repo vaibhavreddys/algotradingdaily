@@ -282,7 +282,7 @@ def simulate_single_trade(
             exit_t = t_bar
             exit_p = c_val
             pnl_pct = ((c_val - entry_p)/entry_p) if direction == 'LONG' else ((entry_p - c_val)/entry_p)
-            result = TradeExitReason.SQUAREOFF_3PM
+            result = TradeExitReason.ALGO_SQUAREOFF_DAY_END
             break
 
     if not exit_t:
