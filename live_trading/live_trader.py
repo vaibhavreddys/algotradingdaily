@@ -28,7 +28,7 @@ from core.trade_db import (
     EXIT_DISPLAY_LABELS,
 )
 from alerts import notify_trade_entry, notify_trailing_sl, notify_trade_exit
-from strategies.vwap_stoch_breakdown import STRATEGY_NAME, STRATEGY_VERSION
+# Dynamic strategy loaded from BaseTradingEngine
 
 
 class LiveTradingEngine(BaseTradingEngine):
@@ -36,8 +36,8 @@ class LiveTradingEngine(BaseTradingEngine):
     Live real-money order management system (OMS) connected directly to OpenAlgo Gateway.
     Shares the exact same macro/micro scheduling loop and signal evaluation with PaperTradingEngine.
     """
-    def __init__(self, config: TradingConfig = CONFIG):
-        super().__init__(config=config, mode="live")
+    def __init__(self, config: TradingConfig = CONFIG, strategy_name: Optional[str] = None, strategy_version: Optional[str] = None):
+        super().__init__(config=config, mode="live", strategy_name=strategy_name, strategy_version=strategy_version)
 
     def _place_openalgo_order(
         self,
@@ -69,7 +69,7 @@ class LiveTradingEngine(BaseTradingEngine):
                     quantity=str(quantity),
                     price=str(round(price, 2)) if price > 0 else "0",
                     trigger_price=str(round(trigger_price, 2)) if trigger_price > 0 else "0",
-                    strategy=STRATEGY_NAME
+                    strategy=self.strategy_name
                 )
                 if res and isinstance(res, dict) and res.get('status') == 'success':
                     order_id = res.get('orderid', res.get('order_id', res.get('data', {}).get('orderid')))
@@ -142,8 +142,8 @@ class LiveTradingEngine(BaseTradingEngine):
             initial_sl=sl_price,
             current_sl=sl_price,
             target_price=tp_price,
-            strategy_name=STRATEGY_NAME,
-            strategy_version=STRATEGY_VERSION,
+            strategy_name=self.strategy_name,
+            strategy_version=self.strategy_version,
             order_type='MIS',
             entry_order_id=order_id,
             sl_order_id=sl_order_id,
@@ -203,7 +203,7 @@ class LiveTradingEngine(BaseTradingEngine):
             if pos.get('sl_order_id') and self.api:
                 cancel_fn = getattr(self.api, 'cancelorder', None) or getattr(self.api, 'cancel_order', None)
                 if cancel_fn:
-                    cancel_fn(order_id=pos['sl_order_id'], strategy=STRATEGY_NAME)
+                    cancel_fn(order_id=pos['sl_order_id'], strategy=self.strategy_name)
 
             # 2. Square off with Market Buy via OpenAlgo
             self._place_openalgo_order(
@@ -265,6 +265,11 @@ class LiveTradingEngine(BaseTradingEngine):
 
 
 if __name__ == "__main__":
-    with prevent_sleep_context():
-        engine = LiveTradingEngine()
-        engine.run_live_loop()
+    import argparse
+    parser = argparse.ArgumentParser(description="Run Algo Live Trading Engine")
+    parser.add_argument("--strategy", type=str, default=None, help="Strategy folder name (e.g. vwap_stoch_trend)")
+    parser.add_argument("--version", type=str, default=None, help="Strategy version (e.g. v1_2)")
+    args = parser.parse_args()
+
+    engine = LiveTradingEngine(strategy_name=args.strategy, strategy_version=args.version)
+    engine.run()

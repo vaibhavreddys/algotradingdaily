@@ -29,7 +29,7 @@ from core.trade_db import (
     EXIT_DISPLAY_LABELS,
 )
 from alerts import notify_trade_entry, notify_trailing_sl, notify_trade_exit
-from strategies.vwap_stoch_breakdown import STRATEGY_NAME, STRATEGY_VERSION
+# Dynamic strategy loaded from BaseTradingEngine
 from data_pipeline import fetch_latest_tick_price
 
 
@@ -38,8 +38,8 @@ class PaperTradingEngine(BaseTradingEngine):
     Virtual Paper Trading Engine.
     Implements entry, trailing SL, and square-off hooks using virtual fills and paper_trades.db.
     """
-    def __init__(self, config: TradingConfig = CONFIG):
-        super().__init__(config=config, mode="paper")
+    def __init__(self, config: TradingConfig = CONFIG, strategy_name: Optional[str] = None, strategy_version: Optional[str] = None):
+        super().__init__(config=config, mode="paper", strategy_name=strategy_name, strategy_version=strategy_version)
         self.paper_trades = self.closed_trades
 
     def execute_entry(self, symbol: str, entry_price: float, sl_price: float, tp_price: float) -> bool:
@@ -76,8 +76,8 @@ class PaperTradingEngine(BaseTradingEngine):
             initial_sl=sl_price,
             current_sl=sl_price,
             target_price=tp_price,
-            strategy_name=STRATEGY_NAME,
-            strategy_version=STRATEGY_VERSION,
+            strategy_name=self.strategy_name,
+            strategy_version=self.strategy_version,
             order_type='MIS',
             entry_order_id='PAPER_ENTRY',
             sl_order_id='PAPER_SL',
@@ -150,6 +150,11 @@ class PaperTradingEngine(BaseTradingEngine):
 
 
 if __name__ == "__main__":
-    with prevent_sleep_context():
-        engine = PaperTradingEngine()
-        engine.run_live_loop()
+    import argparse
+    parser = argparse.ArgumentParser(description="Run Algo Paper Trading Engine")
+    parser.add_argument("--strategy", type=str, default=None, help="Strategy folder name (e.g. vwap_stoch_trend)")
+    parser.add_argument("--version", type=str, default=None, help="Strategy version (e.g. v1_2)")
+    args = parser.parse_args()
+
+    engine = PaperTradingEngine(strategy_name=args.strategy, strategy_version=args.version)
+    engine.run()

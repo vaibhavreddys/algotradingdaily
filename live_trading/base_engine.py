@@ -45,14 +45,7 @@ from core.trade_db import (
     get_trade_journal,
 )
 from alerts import notify_trade_entry, notify_trailing_sl, notify_trade_exit, notify_eod_summary, notify_system_error
-from strategies.vwap_stoch_breakdown import (
-    STRATEGY_NAME,
-    STRATEGY_VERSION,
-    TIMEFRAME,
-    SWING_HIGH_BARS,
-    evaluate_signals,
-    calculate_stop_and_target,
-)
+from strategies.registry import load_strategy_instance, discover_strategies
 from data_pipeline import (
     get_nifty50_symbols,
     fetch_nifty_benchmark,
@@ -114,9 +107,26 @@ class BaseTradingEngine:
     """
     Universal Foundation for Strategy Execution, Risk Control, and Broker Communication.
     """
-    def __init__(self, config: TradingConfig = CONFIG, mode: str = "paper"):
+    def __init__(self, config: TradingConfig = CONFIG, mode: str = "paper", strategy_name: Optional[str] = None, strategy_version: Optional[str] = None):
         self.config = config
         self.mode = mode.lower()
+
+        # Dynamic Strategy Loading from Registry
+        strat_name = strategy_name or getattr(config, 'ACTIVE_STRATEGY', 'vwap_stoch_trend')
+        strat_ver = strategy_version or getattr(config, 'ACTIVE_STRATEGY_VERSION', 'v1_2')
+        try:
+            self.strategy = load_strategy_instance(strat_name, strat_ver)
+            self.strategy_name = getattr(self.strategy, 'NAME', strat_name)
+            self.strategy_version = getattr(self.strategy, 'VERSION', strat_ver)
+            self.timeframe = getattr(self.strategy, 'TIMEFRAME', '15m')
+            self.swing_bars = getattr(self.strategy, 'SWING_BARS', getattr(self.strategy, 'SWING_HIGH_BARS', 3))
+        except Exception:
+            from strategies.vwap_stoch_trend.v1_2 import STRATEGY_INSTANCE
+            self.strategy = STRATEGY_INSTANCE
+            self.strategy_name = self.strategy.NAME
+            self.strategy_version = self.strategy.VERSION
+            self.timeframe = getattr(self.strategy, 'TIMEFRAME', '15m')
+            self.swing_bars = 3
 
         self.api = None
         self.authenticated = False
@@ -193,7 +203,7 @@ class BaseTradingEngine:
     def prewarm_benchmark_feed(self) -> bool:
         """Pre-warms the benchmark feed ~5s before candle close to eliminate scanning latency."""
         try:
-            feed = fetch_nifty_benchmark(period="5d", interval=getattr(self.config, 'TIMEFRAME', TIMEFRAME), force_refresh=True)
+            feed = fetch_nifty_benchmark(period="5d", interval=getattr(self.config, 'self.timeframe', self.timeframe), force_refresh=True)
             if feed is not None and not feed.empty:
                 self._cached_benchmark = feed
                 self._benchmark_timestamp = datetime.datetime.now()
@@ -212,7 +222,7 @@ class BaseTradingEngine:
         ):
             return self._cached_benchmark
 
-        feed = fetch_nifty_benchmark(period="5d", interval=getattr(self.config, 'TIMEFRAME', TIMEFRAME), force_refresh=True)
+        feed = fetch_nifty_benchmark(period="5d", interval=getattr(self.config, 'self.timeframe', self.timeframe), force_refresh=True)
         self._cached_benchmark = feed
         self._benchmark_timestamp = now
         return feed
@@ -353,10 +363,10 @@ class BaseTradingEngine:
             raw_df = fetch_verified_candles(
                 ticker,
                 period="5d",
-                interval=getattr(self.config, 'TIMEFRAME', TIMEFRAME),
+                interval=getattr(self.config, 'self.timeframe', self.timeframe),
                 api_client=self.api
             )
-            if raw_df is None or len(raw_df) < (getattr(self.config, 'SWING_HIGH_BARS', SWING_HIGH_BARS) + 5):
+            if raw_df is None or len(raw_df) < (getattr(self.config, 'self.swing_bars', self.swing_bars) + 5):
                 return None
 
             df = evaluate_signals(raw_df, nifty_pct_map, config=self.config)
@@ -365,7 +375,7 @@ class BaseTradingEngine:
 
             last_idx = len(df) - 1
             last_row = df.iloc[last_idx]
-            swing_high = float(df.iloc[last_idx - getattr(self.config, 'SWING_HIGH_BARS', SWING_HIGH_BARS) : last_idx]['High'].max()) if last_idx >= getattr(self.config, 'SWING_HIGH_BARS', SWING_HIGH_BARS) else 0.0
+            swing_high = float(df.iloc[last_idx - getattr(self.config, 'self.swing_bars', self.swing_bars) : last_idx]['High'].max()) if last_idx >= getattr(self.config, 'self.swing_bars', self.swing_bars) else 0.0
 
             return {
                 'ticker': ticker,
@@ -588,7 +598,7 @@ class BaseTradingEngine:
 
     def run_live_loop(self) -> None:
         """Universal Macro/Micro live loop driver for both Paper and Live modes."""
-        print(f"       ENGINE: {STRATEGY_NAME} ({self.mode.upper()} TRADING)")
+        print(f"       ENGINE: {self.strategy_name} {self.strategy_version} ({self.mode.upper()} TRADING)")
         print(f"       Capital: Rs.{self.get_account_capital():,.0f} | Max Slots: {self.config.MAX_CONCURRENT_POSITIONS}")
         print(f"       Scanning: 15m Candle Closes | Guardian: {self.config.POSITION_MONITOR_INTERVAL_SEC}s Ticks")
         print("=======================================================")
