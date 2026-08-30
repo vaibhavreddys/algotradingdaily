@@ -41,8 +41,9 @@ Trailing Stop Loss  : Move SL to Breakeven (+0.1% buffer) once trade gains +1.0R
 --------------------------------------------------------------------------------
 Position Sizing     : Equal-Split Slot Margin with 5x MIS Leverage (2 Concurrent Slots)
 Max Concurrent Slots: 2 Active Positions
-Daily Max Loss Limit: 3.0% of Day Starting Capital (Hard Platform Circuit Breaker)
-Emergency Actions   : Halts all trading & rejects new signals for rest of day if limit hit
+Daily Max Loss Limit: 3.0% of Day Starting Capital (Strategy-Level Constraint)
+Priority Hierarchy  : Overrides platform default (4.0% in config.py / core.risk) with tighter 3.0% limit
+Emergency Actions   : Halts all trading & rejects all new signals for rest of day if limit hit
 ================================================================================
 """
 
