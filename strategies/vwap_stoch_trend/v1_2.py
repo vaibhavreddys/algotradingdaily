@@ -46,6 +46,8 @@ Runner Logic        : Profitable trades ride the intraday trend until 3:00 PM Sq
 --------------------------------------------------------------------------------
 Position Sizing     : Equal-Split Slot Margin with 5x MIS Leverage (2 Concurrent Slots)
 Max Concurrent Slots: 2 Active Positions
+Daily Max Loss Limit: 3.0% of Day Starting Capital (Hard Platform Circuit Breaker)
+Emergency Actions   : Halts all trading & rejects new signals for rest of day if limit hit
 
 6. STATISTICAL EXPECTANCY (10-MONTH DUCKDB BASELINE)
 --------------------------------------------------------------------------------
