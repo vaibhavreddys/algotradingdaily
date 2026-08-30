@@ -159,3 +159,53 @@ class BacktestDataReader:
         finally:
             con.close()
         return {"summary": summary, "monthly": monthly}
+    def get_universe_dataframes(
+        self,
+        symbols: Optional[list[str]] = None,
+        table: str = "ohlcv_15m"
+    ) -> dict[str, pd.DataFrame]:
+        """
+        High-speed single-batch query that loads all universe symbols in ONE database read (~1.5s).
+        Returns a dict mapping symbol -> DataFrame with Asia/Kolkata DatetimeIndex and standard OHLCV columns.
+        """
+        if table not in ALLOWED_TABLES:
+            raise ValueError(f"Unknown table: {table}. Allowed: {sorted(ALLOWED_TABLES)}")
+            
+        duckdb = self._duck()
+        con = self._connect(duckdb)
+        
+        try:
+            if symbols:
+                clean_syms = [s.replace('.NS', '').replace('^NSEI', 'NIFTY50') for s in symbols]
+                in_clause = ", ".join(f"'{s}'" for s in clean_syms)
+                query = f"""
+                    SELECT symbol, timestamp, open, high, low, close, volume
+                    FROM {table}
+                    WHERE symbol IN ({in_clause})
+                    ORDER BY symbol, timestamp ASC
+                """
+            else:
+                query = f"""
+                    SELECT symbol, timestamp, open, high, low, close, volume
+                    FROM {table}
+                    ORDER BY symbol, timestamp ASC
+                """
+            df_all = con.execute(query).fetchdf()
+        finally:
+            con.close()
+            
+        if df_all.empty:
+            return {}
+            
+        df_all["timestamp"] = self._normalize_timestamp(df_all["timestamp"])
+        df_all.columns = [c.capitalize() if c != 'timestamp' else 'timestamp' for c in df_all.columns]
+        
+        result = {}
+        for sym, group in df_all.groupby('Symbol'):
+            gdf = group.set_index('timestamp').drop(columns=['Symbol'])
+            result[sym] = gdf
+            result[f"{sym}.NS"] = gdf
+            
+        return result
+
+

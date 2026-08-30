@@ -1,3 +1,4 @@
+from data_pipeline.openalgo_ingestion import settings, BacktestDataReader
 """
 Multi-Stock Chronological Portfolio Execution Simulator.
 
@@ -44,7 +45,7 @@ from strategies.vwap_stoch_breakdown import (
 from strategies.registry import discover_strategies, load_strategy_instance
 
 
-def _scan_single_symbol(ticker, nifty_pct_map, config: TradingConfig, refresh: bool, strategy_module=None):
+def _scan_single_symbol(ticker, nifty_pct_map, config: TradingConfig, refresh: bool, strategy_module=None, preloaded_df=None):
     """
     Worker: loads candles, evaluates indicators, and simulates all trades for one symbol.
     Returns (ticker, trades). Owns its DataFrame exclusively -> thread-safe.
@@ -53,13 +54,16 @@ def _scan_single_symbol(ticker, nifty_pct_map, config: TradingConfig, refresh: b
         eval_fn = getattr(strategy_module, 'evaluate_signals', evaluate_signals) if strategy_module else evaluate_signals
         sim_fn = getattr(strategy_module, 'simulate_single_trade', simulate_single_trade) if strategy_module else simulate_single_trade
 
-        raw_df = load_candle_data(
-            ticker,
-            period=getattr(config, 'BACKTEST_PERIOD', '60d'),
-            interval=getattr(config, 'TIMEFRAME', TIMEFRAME),
-            force_refresh=refresh,
-            verbose=False,
-        )
+        if preloaded_df is not None and not preloaded_df.empty and len(preloaded_df) >= 50:
+            raw_df = preloaded_df
+        else:
+            raw_df = load_candle_data(
+                ticker,
+                period=getattr(config, 'BACKTEST_PERIOD', '60d'),
+                interval=getattr(config, 'TIMEFRAME', TIMEFRAME),
+                force_refresh=refresh,
+                verbose=False,
+            )
         if raw_df is None:
             return ticker, []
 
@@ -83,7 +87,7 @@ def _scan_single_symbol(ticker, nifty_pct_map, config: TradingConfig, refresh: b
 
 def scan_universe_signals(symbols, nifty_pct_map, config: TradingConfig = CONFIG, refresh: bool = False, strategy_module=None):
     """
-    Scans all stock symbols in parallel and compiles candidate trade signals sorted chronologically.
+    Scans all stock symbols using high-speed batch memory reading and compiles candidate trade signals sorted chronologically.
     """
     all_signals = []
     total = len(symbols)
@@ -92,9 +96,26 @@ def scan_universe_signals(symbols, nifty_pct_map, config: TradingConfig = CONFIG
     if not symbols:
         return pd.DataFrame()
 
+    # High-Speed Batch Ingestion if DuckDB is present
+    universe_frames = {}
+    timeframe = getattr(config, 'TIMEFRAME', TIMEFRAME)
+    if os.path.exists(settings.DB_PATH) and not refresh:
+        try:
+            reader = BacktestDataReader()
+            table_name = f"ohlcv_{timeframe}"
+            universe_frames = reader.get_universe_dataframes(symbols=symbols, table=table_name)
+        except Exception:
+            universe_frames = {}
+
+    def _worker(ticker):
+        if ticker in universe_frames:
+            raw_df = universe_frames[ticker]
+            return _scan_single_symbol(ticker, nifty_pct_map, config, refresh, strategy_module, preloaded_df=raw_df)
+        return _scan_single_symbol(ticker, nifty_pct_map, config, refresh, strategy_module)
+
     with ThreadPoolExecutor(max_workers=8) as executor:
         futures = {
-            ticker: executor.submit(_scan_single_symbol, ticker, nifty_pct_map, config, refresh, strategy_module)
+            ticker: executor.submit(_worker, ticker)
             for ticker in symbols
         }
 
