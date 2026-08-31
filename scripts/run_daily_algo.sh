@@ -58,7 +58,7 @@ fi
 
 # 4. Stream unbuffered output to both dated log and latest pointer
 export PYTHONUNBUFFERED=1
-python -u "${TARGET_SCRIPT}" 2>&1 | tee -a "${OUTPUT_LOG}" "${DAILY_LOG}" "${LATEST_LOG}"
+python -u "${TARGET_SCRIPT}" 2>&1 | tee -a "${DAILY_LOG}" "${LATEST_LOG}"
 ENGINE_EXIT=$?
 
 # 4. Tear down the Telegram bot worker (if it was started) before exit.

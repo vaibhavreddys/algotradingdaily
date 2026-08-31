@@ -596,6 +596,10 @@ class BaseTradingEngine:
         # Always dispatch EOD summary scorecard to Telegram (even on 0-trade discipline days)
         notify_eod_summary(report_text=eod_msg, mode=self.mode, config=self.config)
 
+    def run(self) -> None:
+        """Alias for run_live_loop() to provide standard execution interface."""
+        self.run_live_loop()
+
     def run_live_loop(self) -> None:
         """Universal Macro/Micro live loop driver for both Paper and Live modes."""
         print(f"       ENGINE: {self.strategy_name} {self.strategy_version} ({self.mode.upper()} TRADING)")
