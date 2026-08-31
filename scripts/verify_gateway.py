@@ -54,10 +54,17 @@ def verify_gateway():
         funds = client.funds()
         print(f"   Response from /funds: {funds}")
         
-        if isinstance(funds, dict) and funds.get("status") == "error":
-            print(f"   ❌ Broker Authentication Error: {funds.get('message')}")
-            if "session" in str(funds).lower() or "token" in str(funds).lower():
-                print("   👉 Troubleshooting: Broker session token expired. Please log in on OpenAlgo portal (http://127.0.0.1:5000) or check TOTP auto-login.")
+        # Check both status and presence of broker funds payload
+        is_error = isinstance(funds, dict) and funds.get("status") == "error"
+        data_payload = funds.get("data", {}) if isinstance(funds, dict) else {}
+        
+        if is_error or not data_payload:
+            print("   ❌ FAILED: Broker Session is NOT authenticated!")
+            if not data_payload and isinstance(funds, dict) and funds.get("status") == "success":
+                print("   ⚠️  OpenAlgo returned empty data payload {'data': {}} -> Broker login required.")
+            elif is_error:
+                print(f"   ❌ Broker Error: {funds.get('message')}")
+            print("   👉 ACTION REQUIRED: Open http://<VPS_IP>:5000 in your browser and complete Shoonya User ID + Password + TOTP Login.")
             return False
             
         print("   ✅ Broker Session Verified & Active!")
