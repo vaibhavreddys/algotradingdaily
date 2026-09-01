@@ -68,15 +68,15 @@ class TelegramAlertChannel(BaseAlertChannel):
         if not self.is_configured:
             return False
 
-        chat_ids: list[int] = list(self._registry.active_chat_ids())
-        if not chat_ids:
-            # Fallback to TELEGRAM_OWNER_CHAT_ID or TELEGRAM_CHAT_ID from .env
-            env_chat_id = os.getenv("TELEGRAM_OWNER_CHAT_ID") or os.getenv("TELEGRAM_CHAT_ID")
-            if env_chat_id:
-                try:
-                    chat_ids = [int(env_chat_id.strip())]
-                except ValueError:
-                    pass
+        # Deduplicate chat IDs across subscribers registry and .env fallback
+        unique_chat_ids: set[int] = set(self._registry.active_chat_ids())
+        env_chat_id = os.getenv("TELEGRAM_OWNER_CHAT_ID") or os.getenv("TELEGRAM_CHAT_ID")
+        if env_chat_id:
+            try:
+                unique_chat_ids.add(int(env_chat_id.strip()))
+            except ValueError:
+                pass
+        chat_ids: list[int] = list(unique_chat_ids)
                     
         if not chat_ids:
             print(
