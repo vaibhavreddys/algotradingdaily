@@ -424,17 +424,18 @@ def _build_status_text(config: TradingConfig = CONFIG) -> str:
     engine_icon, engine_text = _probe_engine_heartbeat(config.TRADING_MODE, config=config)
     market_icon, market_text = _probe_market_status(config)
     broker_tag = _probe_broker_connection(config)
-    strat_name = "VWAP-Stoch Trend"
-    strat_ver = "v1.1"
     timeframe = getattr(config, "TIMEFRAME", "15m")
     try:
-        from strategies.vwap_stoch_trend import STRATEGY_NAME, STRATEGY_VERSION
-        strat_name = STRATEGY_NAME
-        v_raw = str(STRATEGY_VERSION).replace('v', '').replace('_', '.')
-        strat_ver = f"v{v_raw}"
+        from strategies.registry import load_strategy_instance
+        s_name = getattr(config, 'ACTIVE_STRATEGY', 'vwap_stoch_trend')
+        s_ver = getattr(config, 'ACTIVE_STRATEGY_VERSION', 'v1_2')
+        strat_inst = load_strategy_instance(s_name, s_ver)
+        strat_name = getattr(strat_inst, 'NAME', 'VWAP-Stoch Trend')
+        strat_ver = getattr(strat_inst, 'VERSION', '1.2.0')
+        timeframe = getattr(strat_inst, 'TIMEFRAME', timeframe)
+        strategy_line = f"{strat_name} v{strat_ver} ({timeframe})"
     except Exception:
-        pass
-    strategy_line = f"{strat_name} {strat_ver} ({timeframe})"
+        strategy_line = f"VWAP-Stoch Trend v1.2.0 ({timeframe})"
     from core.capital import get_persisted_paper_capital
     cap = get_persisted_paper_capital(initial_capital=config.INITIAL_CAPITAL, mode=config.TRADING_MODE)
     universe = (config.UNIVERSE or "NIFTY50").upper()
