@@ -203,7 +203,7 @@ class BaseTradingEngine:
     def prewarm_benchmark_feed(self) -> bool:
         """Pre-warms the benchmark feed ~5s before candle close to eliminate scanning latency."""
         try:
-            feed = fetch_nifty_benchmark(period="5d", interval=getattr(self.config, 'self.timeframe', self.timeframe), force_refresh=True)
+            feed = fetch_nifty_benchmark(period="5d", interval=self.timeframe, force_refresh=True)
             if feed is not None and not feed.empty:
                 self._cached_benchmark = feed
                 self._benchmark_timestamp = datetime.datetime.now()
@@ -222,7 +222,7 @@ class BaseTradingEngine:
         ):
             return self._cached_benchmark
 
-        feed = fetch_nifty_benchmark(period="5d", interval=getattr(self.config, 'self.timeframe', self.timeframe), force_refresh=True)
+        feed = fetch_nifty_benchmark(period="5d", interval=self.timeframe, force_refresh=True)
         self._cached_benchmark = feed
         self._benchmark_timestamp = now
         return feed
@@ -362,20 +362,20 @@ class BaseTradingEngine:
         try:
             raw_df = fetch_verified_candles(
                 ticker,
-                period="5d",
-                interval=getattr(self.config, 'self.timeframe', self.timeframe),
+                period="60d",
+                interval=self.timeframe,
                 api_client=self.api
             )
-            if raw_df is None or len(raw_df) < (getattr(self.config, 'self.swing_bars', self.swing_bars) + 5):
+            if raw_df is None or len(raw_df) < (self.swing_bars + 5):
                 return None
 
-            df = evaluate_signals(raw_df, nifty_pct_map, config=self.config)
+            df = self.strategy.evaluate_signals(raw_df, nifty_pct_map, config=self.config)
             if df is None or len(df) == 0:
                 return None
 
             last_idx = len(df) - 1
             last_row = df.iloc[last_idx]
-            swing_high = float(df.iloc[last_idx - getattr(self.config, 'self.swing_bars', self.swing_bars) : last_idx]['High'].max()) if last_idx >= getattr(self.config, 'self.swing_bars', self.swing_bars) else 0.0
+            swing_high = float(df.iloc[last_idx - self.swing_bars : last_idx]['High'].max()) if last_idx >= self.swing_bars else 0.0
 
             return {
                 'ticker': ticker,
