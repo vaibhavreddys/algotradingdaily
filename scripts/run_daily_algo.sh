@@ -17,6 +17,7 @@ RETENTION_DAYS=30
 # Create hierarchical structured log directory
 LOGS_DIR="${REPO_DIR}/logs/${MODE}"
 mkdir -p "${LOGS_DIR}"
+mkdir -p "${REPO_DIR}/logs"
 
 if [ "${MODE}" = "live" ]; then
     TARGET_SCRIPT="live_trading/live_trader.py"
@@ -52,24 +53,30 @@ git pull origin main || echo "⚠️ Warning: git pull failed, continuing with l
 # 3. Activate Virtual Environment
 if [ -d "${REPO_DIR}/venv" ]; then
     source "${REPO_DIR}/venv/bin/activate"
+    PYTHON_EXEC="${REPO_DIR}/venv/bin/python"
 else
     echo "⚠️ Warning: venv not found at ${REPO_DIR}/venv, using system python"
+    PYTHON_EXEC="python"
 fi
 
-# 4. Stream unbuffered output to both dated log and latest pointer
+# 4. Automatically restart Telegram Bot to reload fresh strategy and alert logic
+echo "Checking and restarting Telegram Bot service..."
+if systemctl is-active --quiet telegram_bot 2>/dev/null; then
+    echo "🤖 Restarting systemd telegram_bot service..."
+    sudo systemctl restart telegram_bot || true
+else
+    echo "🤖 Restarting background telegram_bot process..."
+    pkill -f "alerts/tg_bot.py" || true
+    sleep 1
+    nohup "${PYTHON_EXEC}" "${REPO_DIR}/alerts/tg_bot.py" >> "${REPO_DIR}/logs/tg_bot.log" 2>&1 &
+fi
+
+# 5. Stream unbuffered output to both dated log and latest pointer
 export PYTHONUNBUFFERED=1
 python -u "${TARGET_SCRIPT}" 2>&1 | tee -a "${DAILY_LOG}" "${LATEST_LOG}"
 ENGINE_EXIT=$?
-
-# 4. Tear down the Telegram bot worker (if it was started) before exit.
-if [ -n "${BOT_PID:-}" ] && kill -0 "${BOT_PID}" 2>/dev/null; then
-    echo "Stopping Telegram bot worker (PID ${BOT_PID})..."
-    kill "${BOT_PID}" 2>/dev/null || true
-    wait "${BOT_PID}" 2>/dev/null || true
-fi
 
 # Record session end to the dated log and print a summary to stdout
 echo "Session [${MODE^^}] finished at: $(date)" >> "${DAILY_LOG}"
 echo "Session [${MODE^^}] finished at: $(date) (engine exit=${ENGINE_EXIT})"
 exit "${ENGINE_EXIT}"
-
