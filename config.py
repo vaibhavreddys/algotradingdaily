@@ -95,7 +95,7 @@ class TradingConfig:
     # -------------------------------------------------------------------------
     # Active Strategy Selection for Live and Paper Trading
     ACTIVE_STRATEGY: str = "vwap_stoch_trend"
-    ACTIVE_STRATEGY_VERSION: str = "v1_2"
+    ACTIVE_STRATEGY_VERSION: str = "v1_3"
 
     INITIAL_CAPITAL: float = 100000.0
     MAX_CONCURRENT_POSITIONS: int = 2

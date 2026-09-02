@@ -384,6 +384,8 @@ class BaseTradingEngine:
                 direction=direction
             )
 
+            confidence = float(last_row.get('Confidence_Score', 50.0))
+
             return {
                 'ticker': ticker,
                 'sym_key': f"{ticker.replace('.NS', '')}-EQ",
@@ -393,6 +395,7 @@ class BaseTradingEngine:
                 'direction': direction,
                 'sl_price': sl_p,
                 'tp_price': tp_p,
+                'confidence_score': confidence,
                 'signal': bool(last_row.get('Signal', False)),
                 'rel_weak_pass': bool(last_row.get('Rel_Weakness_Pass', False)),
                 'vwap_pass': bool(last_row.get('VWAP_Pass', False)),
@@ -497,7 +500,8 @@ class BaseTradingEngine:
                         res['last_row'],
                         res['sl_price'],
                         res['tp_price'],
-                        res['direction']
+                        res['direction'],
+                        res.get('confidence_score', 50.0)
                     ))
 
         # Count feed sources used during this scan
@@ -514,10 +518,14 @@ class BaseTradingEngine:
               f"Stoch({funnel_stats['stoch_passed']}) -> "
               f"Signals({funnel_stats['final_signals']})")
 
+        # Sort qualifying candidates strictly by Strategy Confidence Score descending (highest quality first)
+        candidates.sort(key=lambda c: c[6], reverse=True)
+
         # Execute qualifying candidates if open slots exist
-        for ticker, sym_key, row, sl_p, tp_p, direction in candidates:
+        for ticker, sym_key, row, sl_p, tp_p, direction, conf_score in candidates:
             if len(self.active_positions) >= self.config.MAX_CONCURRENT_POSITIONS:
                 break
+            print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] 🎯 [CONVICTION RANKING] Selected candidate {sym_key} ({direction}) | Confidence: {conf_score:.1f}/100")
             if sym_key in self.active_positions:
                 continue
 

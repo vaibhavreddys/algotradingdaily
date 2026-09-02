@@ -230,13 +230,16 @@ def run_backtest_api(payload: dict) -> dict:
     # Convert trades table (last 100 trades for UI display)
     trades_log = []
     for _, r in tdf.tail(100).iterrows():
+        conf = r.get('Confidence Score')
         trades_log.append({
             "symbol": r['Symbol'],
+            "confidence_score": round(float(conf), 1) if conf is not None and not pd.isna(conf) else None,
             "entry_time": str(r['Entry Time']),
             "exit_time": str(r['Exit Time']),
             "result": r['Result'],
             "gross_pnl": round(float(r['Gross PnL (₹)']), 2),
             "net_pnl": round(float(r['Net PnL (₹)']), 2),
+            "return_pct": round(float(r['PnL %']) * 100.0, 2),
             "pnl_pct": round(float(r['PnL %']), 2),
             "ending_capital": round(float(r['Capital']), 2)
         })
