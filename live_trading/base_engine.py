@@ -376,6 +376,13 @@ class BaseTradingEngine:
             last_idx = len(df) - 1
             last_row = df.iloc[last_idx]
             swing_high = float(df.iloc[last_idx - self.swing_bars : last_idx]['High'].max()) if last_idx >= self.swing_bars else 0.0
+            direction = str(last_row.get('Direction', 'SHORT'))
+
+            sl_p, tp_p, risk_amt = self.strategy.calculate_stop_and_target(
+                df,
+                entry_idx=last_idx,
+                direction=direction
+            )
 
             return {
                 'ticker': ticker,
@@ -383,6 +390,9 @@ class BaseTradingEngine:
                 'last_row': last_row,
                 'raw_df': raw_df,
                 'swing_high': swing_high,
+                'direction': direction,
+                'sl_price': sl_p,
+                'tp_price': tp_p,
                 'signal': bool(last_row.get('Signal', False)),
                 'rel_weak_pass': bool(last_row.get('Rel_Weakness_Pass', False)),
                 'vwap_pass': bool(last_row.get('VWAP_Pass', False)),
@@ -481,7 +491,14 @@ class BaseTradingEngine:
 
                 if res['signal']:
                     funnel_stats['final_signals'] += 1
-                    candidates.append((res['ticker'], res['sym_key'], res['last_row'], res['swing_high']))
+                    candidates.append((
+                        res['ticker'],
+                        res['sym_key'],
+                        res['last_row'],
+                        res['sl_price'],
+                        res['tp_price'],
+                        res['direction']
+                    ))
 
         # Count feed sources used during this scan
         broker_feeds = sum(1 for f in futures if f.result() and getattr(f.result().get('raw_df', None), '_data_source', '').startswith('Shoonya'))
@@ -498,14 +515,13 @@ class BaseTradingEngine:
               f"Signals({funnel_stats['final_signals']})")
 
         # Execute qualifying candidates if open slots exist
-        for ticker, sym_key, row, swing_high in candidates:
+        for ticker, sym_key, row, sl_p, tp_p, direction in candidates:
             if len(self.active_positions) >= self.config.MAX_CONCURRENT_POSITIONS:
                 break
             if sym_key in self.active_positions:
                 continue
 
             entry_p = float(row['Close'])
-            sl_p, tp_p, _ = calculate_stop_and_target(entry_price=entry_p, swing_high=swing_high, config=self.config)
 
             # Delegate order placement to child class hook. Wrap so any rejection
             # (raised exception or a False return from the child hook) is routed to
