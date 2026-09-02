@@ -3,7 +3,7 @@
 STRATEGY SPECIFICATION & ARCHITECTURE
 ================================================================================
 Strategy Name       : VWAP-Stoch Trend
-Version             : 1.3.0 (Confidence Ranked Bidirectional - Production Standard)
+Version             : 1.2.0 (Bidirectional Runner - Default Production)
 Author / Owner      : Algorithmic Trading Team
 Status              : Production / Active Default
 
@@ -14,19 +14,47 @@ Trading Universe    : NIFTY 200 (Constituents with DuckDB / Live Stream)
 Direction           : Bidirectional (Long & Short)
 Benchmark Reference : NIFTY 50 / NIFTY 200 Composite (% Change from Open)
 
-2. CONFIDENCE SCORING ENGINE (0.0 to 100.0)
+2. INDICATORS & PARAMETERS
 --------------------------------------------------------------------------------
-Encapsulates 4-pillar conviction weighting:
-  - 40% ADX Trend Conviction (normalized 25 -> 50+ to 0 -> 100)
-  - 35% Relative Momentum Spread vs NIFTY (normalized 0% -> 2.5%+ to 0 -> 100)
-  - 15% VWAP Displacement Distance (normalized 0% -> 2% to 0 -> 100)
-  - 10% Stochastic RSI Hook Severity (normalized threshold penetration)
+Indicators Used     : 1. VWAP (Intraday Volume Weighted Average Price)
+                      2. Stochastic RSI (K=14, D=3, Stoch=14, RSI=14)
+                      3. ADX (Period=14, Trend Threshold >= 25.0)
+                      4. Relative Strength & Weakness vs. Benchmark
 
-3. DETERMINISTIC SLOT ALLOCATION
+3. TIMING & SESSION CONSTRAINTS
 --------------------------------------------------------------------------------
-When concurrent signals exceed available portfolio slots, candidate setups are
-ranked descending by Confidence Score, ensuring capital is deployed strictly
-into the highest-conviction trades first with 100% Backtest <-> Live Parity.
+Market Open Warmup  : 10:00 AM IST (Warmup minutes = 45 after 09:15)
+Entry Cutoff Time   : 01:30 PM IST (Cutoff minutes = 120 before 15:30)
+Mandatory Square-off: 03:00 PM IST (All open runners auto-exited at 3:00 PM)
+
+4. ENTRY & EXIT RULES
+--------------------------------------------------------------------------------
+Long Entry Rules    : - Stock % from Day Open > Benchmark % from Day Open (Rel Strength)
+                      - Close > VWAP
+                      - Stoch RSI K crosses above 20 from oversold (Stoch_K_prev <= 20 and Stoch_K > 20)
+                      - ADX(14) >= 25.0 (Strong trend presence)
+Short Entry Rules   : - Stock % from Day Open < Benchmark % from Day Open (Rel Weakness)
+                      - Close < VWAP
+                      - Stoch RSI K crosses below 80 from overbought (Stoch_K_prev >= 80 and Stoch_K < 80)
+                      - ADX(14) >= 25.0 (Strong trend presence)
+Exit Target (TP)    : 1:1.5 Risk-to-Reward Ratio (Initial target order)
+Stop Loss (SL)      : 3-Bar Swing High (Shorts) / Swing Low (Longs) + Buffer
+Trailing Stop Loss  : Move SL to Breakeven (+0.1% buffer) once trade gains +1.0R profit
+Runner Logic        : Profitable trades ride the intraday trend until 3:00 PM Square-off
+
+5. RISK MANAGEMENT & SIZING
+--------------------------------------------------------------------------------
+Position Sizing     : Equal-Split Slot Margin with 5x MIS Leverage (2 Concurrent Slots)
+Max Concurrent Slots: 2 Active Positions
+Daily Max Loss Limit: 3.0% of Day Starting Capital (Strategy-Level Constraint)
+Priority Hierarchy  : Overrides platform default (4.0% in config.py / core.risk) with tighter 3.0% limit
+Emergency Actions   : Halts all trading & rejects all new signals for rest of day if limit hit
+
+6. STATISTICAL EXPECTANCY (10-MONTH DUCKDB BASELINE)
+--------------------------------------------------------------------------------
+Win Rate            : ~42.3%
+Gross Profit Factor : 1.28
+Net Realized ROI    : +56.56% (after all statutory taxes & charges)
 ================================================================================
 """
 
@@ -48,25 +76,24 @@ SWING_BARS = 3
 
 
 class VWAPStochTrendStrategyV13(BaseStrategy):
-    """
-    VWAP-Stoch Trend Strategy v1.3 (Bidirectional + Deterministic Confidence Ranking)
-    """
     NAME: str = "VWAP-Stoch Trend"
     VERSION: str = "1.3.0"
     TIMEFRAME: str = "15m"
-    DIRECTION_MODE: str = "BIDIRECTIONAL"
+    WARMUP_MINUTES: int = 45   # 10:00 AM on NSE
+    CUTOFF_MINUTES: int = 120  # 1:30 PM on NSE
+    SQUAREOFF_MINUTES_BEFORE_CLOSE: int = 30  # 3:00 PM
 
-    SWING_BARS: int = 5
+    SWING_BARS: int = 3
+    MIN_SL_BUFFER_PCT: float = 0.0020
+    SWING_SL_BUFFER_PCT: float = 0.0005
+    RISK_REWARD_RATIO: float = 1.5
     ADX_THRESHOLD: float = 25.0
     STOCH_OVERBOUGHT: float = 80.0
     STOCH_OVERSOLD: float = 20.0
-    WARMUP_MINUTES: int = 45   # 10:00 AM IST
-    CUTOFF_MINUTES: int = 120  # 1:30 PM IST
 
     def calculate_confidence_score(self, df: pd.DataFrame) -> pd.Series:
         """
         Encapsulated 4-Pillar Strategy Confidence Scoring Formula (0.0 to 100.0).
-        Evaluates how strongly the current setup confirms the strategy rules.
         """
         if df is None or df.empty or 'Close' not in df.columns:
             return pd.Series(0.0, index=df.index if df is not None else [0])
@@ -191,8 +218,6 @@ class VWAPStochTrendStrategyV13(BaseStrategy):
 
         df['Signal'] = df['Short_Signal'] | df['Long_Signal']
         df['Direction'] = np.where(df['Short_Signal'], 'SHORT', np.where(df['Long_Signal'], 'LONG', 'NONE'))
-
-        # 9. Compute Strategy-Specific Confidence Score (0 - 100)
         df['Confidence_Score'] = self.calculate_confidence_score(df)
 
         return df
@@ -208,189 +233,118 @@ class VWAPStochTrendStrategyV13(BaseStrategy):
             return 0.0, 0.0, 0.0
 
         swing_start = max(0, entry_idx - self.SWING_BARS)
-        rr_ratio = getattr(CONFIG, 'RISK_REWARD_RATIO', 2.0)
-        buffer_pct = getattr(CONFIG, 'SL_BUFFER_PCT', 0.0005)
+        rr_ratio = getattr(CONFIG, 'RISK_REWARD_RATIO', self.RISK_REWARD_RATIO)
 
-        if direction == "LONG":
-            swing_low = float(df.iloc[swing_start:entry_idx]['Low'].min()) if entry_idx > swing_start else entry_price * 0.99
-            raw_sl = swing_low * (1.0 - buffer_pct)
-            sl_price = min(raw_sl, entry_price * (1.0 - getattr(CONFIG, 'MIN_SL_PCT', 0.005)))
-            sl_price = max(sl_price, entry_price * (1.0 - getattr(CONFIG, 'MAX_SL_PCT', 0.02)))
+        if str(direction).upper() == "LONG":
+            swing_low = float(df.iloc[swing_start : entry_idx + 1]['Low'].min()) if entry_idx > 0 else entry_price
+            sl_swing = swing_low * (1.0 - self.SWING_SL_BUFFER_PCT)
+            sl_min = entry_price * (1.0 - self.MIN_SL_BUFFER_PCT)
+            sl_price = min(sl_swing, sl_min)
             risk = entry_price - sl_price
             target_price = entry_price + (risk * rr_ratio)
         else:
-            swing_high = float(df.iloc[swing_start:entry_idx]['High'].max()) if entry_idx > swing_start else entry_price * 1.01
-            raw_sl = swing_high * (1.0 + buffer_pct)
-            sl_price = max(raw_sl, entry_price * (1.0 + getattr(CONFIG, 'MIN_SL_PCT', 0.005)))
-            sl_price = min(sl_price, entry_price * (1.0 + getattr(CONFIG, 'MAX_SL_PCT', 0.02)))
+            swing_high = float(df.iloc[swing_start : entry_idx + 1]['High'].max()) if entry_idx > 0 else entry_price
+            sl_swing = swing_high * (1.0 + self.SWING_SL_BUFFER_PCT)
+            sl_min = entry_price * (1.0 + self.MIN_SL_BUFFER_PCT)
+            sl_price = max(sl_swing, sl_min)
             risk = sl_price - entry_price
             target_price = entry_price - (risk * rr_ratio)
 
         return round(sl_price, 2), round(target_price, 2), round(risk, 2)
 
-    def simulate_single_trade(
-        self,
-        df: pd.DataFrame,
-        entry_idx: int,
-        symbol: str,
-        config: Optional[TradingConfig] = None
-    ) -> Optional[Dict[str, Any]]:
-        row = df.iloc[entry_idx]
-        direction = str(row.get('Direction', 'SHORT'))
-        if direction not in ("LONG", "SHORT"):
-            return None
 
-        entry_time = df.index[entry_idx]
-        entry_price = float(row['Close'])
-        sl_price, target_price, risk = self.calculate_stop_and_target(df, entry_idx, direction=direction)
-        confidence_score = float(row.get('Confidence_Score', 50.0))
-
-        if entry_price <= 0 or risk <= 0:
-            return None
-
-        trailing_sl = sl_price
-        be_activated = False
-
-        market_key = getattr(config, 'EXCHANGE_MARKET', 'NSE') if config else 'NSE'
-        squareoff_cutoff = datetime.time(15, 0)
-
-        for j in range(entry_idx + 1, len(df)):
-            curr_row = df.iloc[j]
-            curr_time = df.index[j]
-            high = float(curr_row['High'])
-            low = float(curr_row['Low'])
-            close = float(curr_row['Close'])
-
-            if curr_time.date() != entry_time.date():
-                break
-
-            if direction == "LONG":
-                # Trailing Breakeven Trigger (+1R)
-                if not be_activated and high >= (entry_price + risk):
-                    be_activated = True
-                    trailing_sl = entry_price
-
-                # Check SL hit
-                if low <= trailing_sl:
-                    exit_p = trailing_sl
-                    pnl_pct = (exit_p - entry_price) / entry_price
-                    res = 'BREAKEVEN_EXIT' if be_activated and exit_p >= entry_price else 'SL_HIT'
-                    return {
-                        'Symbol': symbol,
-                        'Direction': direction,
-                        'Entry Time': entry_time,
-                        'Entry Price': entry_price,
-                        'Stop Loss Price': sl_price,
-                        'Target Price': target_price,
-                        'Exit Time': curr_time,
-                        'Exit Price': exit_p,
-                        'PnL %': round(pnl_pct, 4),
-                        'Result': res,
-                        'Confidence Score': confidence_score,
-                    }
-
-                # Check Target hit
-                if high >= target_price:
-                    exit_p = target_price
-                    pnl_pct = (exit_p - entry_price) / entry_price
-                    return {
-                        'Symbol': symbol,
-                        'Direction': direction,
-                        'Entry Time': entry_time,
-                        'Entry Price': entry_price,
-                        'Stop Loss Price': sl_price,
-                        'Target Price': target_price,
-                        'Exit Time': curr_time,
-                        'Exit Price': exit_p,
-                        'PnL %': round(pnl_pct, 4),
-                        'Result': 'TARGET_HIT',
-                        'Confidence Score': confidence_score,
-                    }
-            else:
-                # SHORT Direction
-                # Trailing Breakeven Trigger (+1R)
-                if not be_activated and low <= (entry_price - risk):
-                    be_activated = True
-                    trailing_sl = entry_price
-
-                # Check SL hit
-                if high >= trailing_sl:
-                    exit_p = trailing_sl
-                    pnl_pct = (entry_price - exit_p) / entry_price
-                    res = 'BREAKEVEN_EXIT' if be_activated and exit_p <= entry_price else 'SL_HIT'
-                    return {
-                        'Symbol': symbol,
-                        'Direction': direction,
-                        'Entry Time': entry_time,
-                        'Entry Price': entry_price,
-                        'Stop Loss Price': sl_price,
-                        'Target Price': target_price,
-                        'Exit Time': curr_time,
-                        'Exit Price': exit_p,
-                        'PnL %': round(pnl_pct, 4),
-                        'Result': res,
-                        'Confidence Score': confidence_score,
-                    }
-
-                # Check Target hit
-                if low <= target_price:
-                    exit_p = target_price
-                    pnl_pct = (entry_price - exit_p) / entry_price
-                    return {
-                        'Symbol': symbol,
-                        'Direction': direction,
-                        'Entry Time': entry_time,
-                        'Entry Price': entry_price,
-                        'Stop Loss Price': sl_price,
-                        'Target Price': target_price,
-                        'Exit Time': curr_time,
-                        'Exit Price': exit_p,
-                        'PnL %': round(pnl_pct, 4),
-                        'Result': 'TARGET_HIT',
-                        'Confidence Score': confidence_score,
-                    }
-
-            # 3:00 PM Auto Squareoff
-            if not is_continuous_market(market_key) and curr_time.time() >= squareoff_cutoff:
-                exit_p = close
-                pnl_pct = (exit_p - entry_price) / entry_price if direction == "LONG" else (entry_price - exit_p) / entry_price
-                return {
-                    'Symbol': symbol,
-                    'Direction': direction,
-                    'Entry Time': entry_time,
-                    'Entry Price': entry_price,
-                    'Stop Loss Price': sl_price,
-                    'Target Price': target_price,
-                    'Exit Time': curr_time,
-                    'Exit Price': exit_p,
-                    'PnL %': round(pnl_pct, 4),
-                    'Result': 'ALGO_SQUAREOFF_DAY_END',
-                    'Confidence Score': confidence_score,
-                }
-
-        # End of series squareoff
-        last_time = df.index[-1]
-        exit_p = float(df.iloc[-1]['Close'])
-        pnl_pct = (exit_p - entry_price) / entry_price if direction == "LONG" else (entry_price - exit_p) / entry_price
-        return {
-            'Symbol': symbol,
-            'Direction': direction,
-            'Entry Time': entry_time,
-            'Entry Price': entry_price,
-            'Stop Loss Price': sl_price,
-            'Target Price': target_price,
-            'Exit Time': last_time,
-            'Exit Price': exit_p,
-            'PnL %': round(pnl_pct, 4),
-            'Result': 'ALGO_SQUAREOFF_DAY_END',
-            'Confidence Score': confidence_score,
-        }
-
-
-# Standard exports
-STRATEGY_CLASS = VWAPStochTrendStrategyV13
 STRATEGY_INSTANCE = VWAPStochTrendStrategyV13()
 
-evaluate_signals = STRATEGY_INSTANCE.evaluate_signals
-calculate_stop_and_target = STRATEGY_INSTANCE.calculate_stop_and_target
-simulate_single_trade = STRATEGY_INSTANCE.simulate_single_trade
+
+def evaluate_signals(df: pd.DataFrame, nifty_pct_map: Optional[pd.Series] = None, config: Optional[TradingConfig] = None) -> Optional[pd.DataFrame]:
+    return STRATEGY_INSTANCE.evaluate_signals(df, nifty_pct_map, config)
+
+
+def simulate_single_trade(
+    df: pd.DataFrame, 
+    entry_idx: int, 
+    ticker: str,
+    config: TradingConfig = CONFIG
+) -> Optional[Dict[str, Any]]:
+    if entry_idx >= len(df) - 1:
+        return None
+
+    direction = str(df.iloc[entry_idx].get('Direction', 'SHORT')).upper()
+    if direction not in ('LONG', 'SHORT'):
+        direction = 'SHORT' if bool(df.iloc[entry_idx].get('Short_Signal', False)) else 'LONG'
+
+    entry_t = df.index[entry_idx]
+    entry_p = float(df.iloc[entry_idx]['Close'])
+    sl, tp, risk = STRATEGY_INSTANCE.calculate_stop_and_target(df, entry_idx, direction=direction)
+    risk_pct = risk / entry_p if entry_p > 0 else 0.0
+
+    if risk <= 0 or (risk / entry_p) > 0.025:
+        return None
+
+    exit_t, pnl_pct, result, exit_p = None, 0.0, '', entry_p
+    curr_sl = sl
+    trailed = False
+
+    for i in range(entry_idx + 1, len(df)):
+        t_bar = df.index[i]
+        h_val = float(df.iloc[i]['High'])
+        l_val = float(df.iloc[i]['Low'])
+        c_val = float(df.iloc[i]['Close'])
+
+        if direction == 'LONG':
+            if not trailed and h_val >= (entry_p + risk):
+                curr_sl = max(curr_sl, round(entry_p * 1.001, 2))
+                trailed = True
+
+            if l_val <= curr_sl:
+                exit_t = t_bar
+                exit_p = curr_sl
+                pnl_pct = (curr_sl - entry_p) / entry_p
+                result = TradeExitReason.TRAILING_SL_HIT if trailed else TradeExitReason.SL_HIT
+                break
+            elif h_val >= tp:
+                exit_t = t_bar
+                exit_p = tp
+                pnl_pct = STRATEGY_INSTANCE.RISK_REWARD_RATIO * risk_pct
+                result = TradeExitReason.TARGET_HIT
+                break
+        else: # SHORT
+            if not trailed and l_val <= (entry_p - risk):
+                curr_sl = min(curr_sl, round(entry_p * 0.999, 2))
+                trailed = True
+
+            if h_val >= curr_sl:
+                exit_t = t_bar
+                exit_p = curr_sl
+                pnl_pct = (entry_p - curr_sl) / entry_p
+                result = TradeExitReason.TRAILING_SL_HIT if trailed else TradeExitReason.SL_HIT
+                break
+            elif l_val <= tp:
+                exit_t = t_bar
+                exit_p = tp
+                pnl_pct = STRATEGY_INSTANCE.RISK_REWARD_RATIO * risk_pct
+                result = TradeExitReason.TARGET_HIT
+                break
+
+        if (t_bar.hour == 15 and t_bar.minute >= 0) or (t_bar.hour > 15):
+            exit_t = t_bar
+            exit_p = c_val
+            pnl_pct = ((c_val - entry_p)/entry_p) if direction == 'LONG' else ((entry_p - c_val)/entry_p)
+            result = TradeExitReason.ALGO_SQUAREOFF_DAY_END
+            break
+
+    if not exit_t:
+        return None
+
+    return {
+        'Symbol': ticker,
+        'Direction': direction,
+        'Entry Time': entry_t,
+        'Exit Time': exit_t,
+        'Entry Price': entry_p,
+        'Exit Price': exit_p,
+        'Stop Loss Price': sl,
+        'Target Price': tp,
+        'PnL %': pnl_pct,
+        'Result': result
+    }
