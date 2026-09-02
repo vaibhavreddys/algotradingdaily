@@ -368,8 +368,11 @@ def _probe_broker_connection(config: TradingConfig) -> str:
         from openalgo import api as OpenAlgoClient
         client = OpenAlgoClient(api_key=api_key, host=host)
         funds = client.funds()
-        if isinstance(funds, dict) and funds.get("status") == "error":
-            return f"(🔴 Broker: {broker_name} Auth Failed)"
+        if not isinstance(funds, dict) or funds.get("status") != "success":
+            return f"(🔴 Broker: {broker_name} Disconnected / Auth Failed)"
+        data = funds.get("data", {})
+        if not data or not isinstance(data, dict) or ("availablecash" not in data and "cash" not in data and "net" not in data):
+            return f"(🔴 Broker: {broker_name} Session Expired)"
         return f"(🟢 Broker: {broker_name} Connected)"
     except Exception:
         return f"(⚪ Broker: {broker_name} Offline)"
