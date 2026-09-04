@@ -42,7 +42,7 @@ class PaperTradingEngine(BaseTradingEngine):
         super().__init__(config=config, mode="paper", strategy_name=strategy_name, strategy_version=strategy_version)
         self.paper_trades = self.closed_trades
 
-    def execute_entry(self, symbol: str, entry_price: float, sl_price: float, tp_price: float) -> bool:
+    def execute_entry(self, symbol: str, entry_price: float, sl_price: float, tp_price: float, direction: str = "SHORT") -> bool:
         """Executes virtual paper entry with position sizing and database persistence."""
         if len(self.active_positions) >= self.config.MAX_CONCURRENT_POSITIONS:
             return False
@@ -66,6 +66,7 @@ class PaperTradingEngine(BaseTradingEngine):
             'sl_price': sl_price,
             'tp_price': tp_price,
             'risk': risk,
+            'direction': str(direction).upper(),
             'trailed': False
         }
 
@@ -84,8 +85,9 @@ class PaperTradingEngine(BaseTradingEngine):
             mode="paper"
         )
 
-        print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] 🚀 [PAPER SHORT] {qty}x {symbol} @ ₹{entry_price:.2f} | SL: ₹{sl_price:.2f} | TP: ₹{tp_price:.2f}")
-        notify_trade_entry(symbol=symbol, price=entry_price, sl=sl_price, tp=tp_price, qty=qty, mode="paper", config=self.config)
+        dir_clean = str(direction).upper()
+        print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] 🚀 [PAPER {dir_clean}] {qty}x {symbol} @ ₹{entry_price:.2f} | SL: ₹{sl_price:.2f} | TP: ₹{tp_price:.2f}")
+        notify_trade_entry(symbol=symbol, price=entry_price, sl=sl_price, tp=tp_price, qty=qty, direction=dir_clean, mode="paper", config=self.config)
         return True
 
     def execute_trailing_sl(self, symbol: str, be_price: float) -> bool:
@@ -110,12 +112,20 @@ class PaperTradingEngine(BaseTradingEngine):
         entry_p = pos['entry_price']
         qty = pos['qty']
         
-        gross_pnl = (entry_p - exit_price) * qty
-        sell_turnover = entry_p * qty
-        buy_turnover = exit_price * qty
+        dir_clean = str(pos.get('direction', 'SHORT')).upper()
+        if dir_clean == "LONG":
+            gross_pnl = (exit_price - entry_p) * qty
+            buy_turnover = entry_p * qty
+            sell_turnover = exit_price * qty
+            pnl_pct = (exit_price - entry_p) / entry_p * 100
+        else:
+            gross_pnl = (entry_p - exit_price) * qty
+            sell_turnover = entry_p * qty
+            buy_turnover = exit_price * qty
+            pnl_pct = (entry_p - exit_price) / entry_p * 100
+
         charges = calculate_charges(sell_turnover=sell_turnover, buy_turnover=buy_turnover)
         net_pnl = gross_pnl - charges
-        pnl_pct = (entry_p - exit_price) / entry_p * 100
         actual_exit_time = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
         close_and_archive_position(

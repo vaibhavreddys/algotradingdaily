@@ -342,6 +342,10 @@ class BaseTradingEngine:
                     )
                     continue
 
+            inferred_dir = row.get('direction') or ('LONG' if float(row.get('target_price', 0)) > float(row.get('entry_price', 0)) else 'SHORT')
+            is_long_pos = (inferred_dir == 'LONG')
+            trailed_flag = (row['current_sl'] >= row['entry_price']) if is_long_pos else (row['current_sl'] <= row['entry_price'])
+
             self.active_positions[sym] = {
                 'symbol': sym,
                 'entry_price': row['entry_price'],
@@ -350,7 +354,8 @@ class BaseTradingEngine:
                 'sl_price': row['current_sl'],
                 'tp_price': row['target_price'],
                 'risk': abs(row['current_sl'] - row['entry_price']),
-                'trailed': (row['current_sl'] <= row['entry_price']),
+                'direction': inferred_dir,
+                'trailed': trailed_flag,
                 'entry_order_id': row.get('entry_order_id'),
                 'sl_order_id': row.get('sl_order_id'),
             }
@@ -535,7 +540,7 @@ class BaseTradingEngine:
             # (raised exception or a False return from the child hook) is routed to
             # the operational error channel instead of being silently swallowed.
             try:
-                placed = self.execute_entry(symbol=sym_key, entry_price=entry_p, sl_price=sl_p, tp_price=tp_p)
+                placed = self.execute_entry(symbol=sym_key, entry_price=entry_p, sl_price=sl_p, tp_price=tp_p, direction=direction)
             except Exception as entry_err:
                 notify_system_error(
                     component="OrderPlacement",
@@ -723,19 +728,35 @@ class BaseTradingEngine:
         curr_sl = pos['sl_price']
         tp = pos['tp_price']
         risk = pos['risk']
+        dir_clean = str(pos.get('direction', 'SHORT')).upper()
+        is_long = (dir_clean == "LONG")
 
-        # 1. Check Stop Loss Trigger (In Paper / Non-BO Live fallback)
-        if high >= curr_sl and self.mode == "paper":
-            result = TradeExitReason.TRAILING_SL_HIT if pos['trailed'] else TradeExitReason.SL_HIT
-            return self.execute_squareoff(symbol, exit_price=curr_sl, reason=result)
+        if is_long:
+            # 1. Check Stop Loss Trigger for Long (low drops below or hits SL)
+            if low <= curr_sl and self.mode == "paper":
+                result = TradeExitReason.TRAILING_SL_HIT if pos['trailed'] else TradeExitReason.SL_HIT
+                return self.execute_squareoff(symbol, exit_price=curr_sl, reason=result)
 
-        # 2. Check Target Trigger (In Paper / Non-BO Live fallback)
-        if low <= tp and self.mode == "paper":
-            return self.execute_squareoff(symbol, exit_price=tp, reason=TradeExitReason.TARGET_HIT)
+            # 2. Check Target Trigger for Long (high rises to or exceeds TP)
+            if high >= tp and self.mode == "paper":
+                return self.execute_squareoff(symbol, exit_price=tp, reason=TradeExitReason.TARGET_HIT)
 
-        # 3. Universal +1R Trailing SL to Breakeven
-        if not pos['trailed'] and low <= (entry_p - risk):
-            self.execute_trailing_sl(symbol, be_price=entry_p)
+            # 3. Universal +1R Trailing SL to Breakeven for Long (high gains +1R profit)
+            if not pos['trailed'] and high >= (entry_p + risk):
+                self.execute_trailing_sl(symbol, be_price=entry_p)
+        else:
+            # 1. Check Stop Loss Trigger for Short (high rises to or exceeds SL)
+            if high >= curr_sl and self.mode == "paper":
+                result = TradeExitReason.TRAILING_SL_HIT if pos['trailed'] else TradeExitReason.SL_HIT
+                return self.execute_squareoff(symbol, exit_price=curr_sl, reason=result)
+
+            # 2. Check Target Trigger for Short (low drops to or breaks TP)
+            if low <= tp and self.mode == "paper":
+                return self.execute_squareoff(symbol, exit_price=tp, reason=TradeExitReason.TARGET_HIT)
+
+            # 3. Universal +1R Trailing SL to Breakeven for Short (low drops by +1R profit)
+            if not pos['trailed'] and low <= (entry_p - risk):
+                self.execute_trailing_sl(symbol, be_price=entry_p)
 
         # 4. Mandatory 3:00 PM Squareoff
         if self.is_squareoff_time(now=now):

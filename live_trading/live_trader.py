@@ -78,7 +78,7 @@ class LiveTradingEngine(BaseTradingEngine):
             print(f"❌ OpenAlgo placeorder exception for {symbol}: {e}")
         return None
 
-    def execute_entry(self, symbol: str, entry_price: float, sl_price: float, tp_price: float) -> bool:
+    def execute_entry(self, symbol: str, entry_price: float, sl_price: float, tp_price: float, direction: str = "SHORT") -> bool:
         """Executes Live Short Order using OpenAlgo Unified OMS with linked SL protection."""
         if len(self.active_positions) >= self.config.MAX_CONCURRENT_POSITIONS:
             return False
@@ -93,32 +93,37 @@ class LiveTradingEngine(BaseTradingEngine):
         )
         risk = abs(sl_price - entry_price)
 
-        print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] 🚀 [OPENALGO OMS] Placing SHORT MIS: {qty}x {symbol} @ ₹{entry_price:.2f} (SL: ₹{sl_price:.2f})")
+        dir_clean = str(direction).upper()
+        is_long = (dir_clean == "LONG")
+        entry_action = "BUY" if is_long else "SELL"
+        sl_action = "SELL" if is_long else "BUY"
+        sl_limit_price = sl_price * (0.998 if is_long else 1.002)
 
-        # 1. Place Market Short Entry
+        print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] 🚀 [OPENALGO OMS] Placing {dir_clean} MIS: {qty}x {symbol} @ ₹{entry_price:.2f} (SL: ₹{sl_price:.2f})")
+
+        # 1. Place Market Entry Order
         order_id = self._place_openalgo_order(
             symbol=symbol,
-            action="SELL",
+            action=entry_action,
             price_type="MARKET",
             product="MIS",
             quantity=qty,
-            remarks=f"{STRATEGY_NAME} Entry"
+            remarks=f"{STRATEGY_NAME} {dir_clean} Entry"
         )
         if not order_id:
             print(f"❌ Entry order rejected by OpenAlgo for {symbol}")
             return False
 
-        # 2. Place Linked SL Protection (Buy SL-LMT)
-        sl_limit_price = sl_price * 1.002
+        # 2. Place Linked SL Protection Order
         sl_order_id = self._place_openalgo_order(
             symbol=symbol,
-            action="BUY",
+            action=sl_action,
             price_type="SL-LMT",
             product="MIS",
             quantity=qty,
             price=sl_limit_price,
             trigger_price=sl_price,
-            remarks=f"{STRATEGY_NAME} SL Protection"
+            remarks=f"{STRATEGY_NAME} {dir_clean} SL Protection"
         )
 
         entry_time = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -133,6 +138,7 @@ class LiveTradingEngine(BaseTradingEngine):
             'sl_price': sl_price,
             'tp_price': tp_price,
             'risk': risk,
+            'direction': dir_clean,
             'trailed': False
         }
         save_active_position(
@@ -150,7 +156,7 @@ class LiveTradingEngine(BaseTradingEngine):
             mode='live'
         )
         print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] ✅ MIS Active: {symbol} (Order: {order_id} | Linked SL: {sl_order_id})")
-        notify_trade_entry(symbol=symbol, price=entry_price, sl=sl_price, tp=tp_price, qty=qty, mode="live", config=self.config)
+        notify_trade_entry(symbol=symbol, price=entry_price, sl=sl_price, tp=tp_price, qty=qty, direction=dir_clean, mode="live", config=self.config)
         return True
 
 
@@ -164,14 +170,18 @@ class LiveTradingEngine(BaseTradingEngine):
         clean_sym = symbol.replace('.NS', '').replace('-EQ', '')
         exchange = getattr(self.config, 'EXCHANGE_MARKET', 'NSE')
 
+        dir_clean = str(pos.get('direction', 'SHORT')).upper()
+        is_long = (dir_clean == "LONG")
+        sl_action = "SELL" if is_long else "BUY"
+        be_limit_price = be_price * (0.998 if is_long else 1.002)
+
         try:
-            be_limit_price = be_price * 1.002
             mod_fn = getattr(self.api, 'modifyorder', None) or getattr(self.api, 'modify_order', None)
             if mod_fn:
                 res = mod_fn(
                     order_id=pos['sl_order_id'],
                     symbol=clean_sym,
-                    action="BUY",
+                    action=sl_action,
                     exchange=exchange,
                     price_type="SL-LMT",
                     product="MIS",
@@ -205,25 +215,34 @@ class LiveTradingEngine(BaseTradingEngine):
                 if cancel_fn:
                     cancel_fn(order_id=pos['sl_order_id'], strategy=self.strategy_name)
 
-            # 2. Square off with Market Buy via OpenAlgo
+            # 2. Square off with Market Order via OpenAlgo
+            dir_clean = str(pos.get('direction', 'SHORT')).upper()
+            is_long = (dir_clean == "LONG")
+            sqoff_action = "SELL" if is_long else "BUY"
+
             self._place_openalgo_order(
                 symbol=symbol,
-                action="BUY",
+                action=sqoff_action,
                 price_type="MARKET",
                 product="MIS",
                 quantity=pos['qty'],
-                remarks=f"Squareoff: {reason}"
+                remarks=f"Squareoff {dir_clean}: {reason}"
             )
 
             pos_closed = self.active_positions.pop(symbol)
             entry_p = pos_closed['entry_price']
             qty = pos_closed['qty']
-            
+
             from core.charges import calculate_charges
-            gross_pnl = (entry_p - exit_price) * qty
-            charges = calculate_charges(sell_turnover=entry_p * qty, buy_turnover=exit_price * qty)
+            if is_long:
+                gross_pnl = (exit_price - entry_p) * qty
+                charges = calculate_charges(sell_turnover=exit_price * qty, buy_turnover=entry_p * qty)
+                pnl_pct = (exit_price - entry_p) / entry_p * 100
+            else:
+                gross_pnl = (entry_p - exit_price) * qty
+                charges = calculate_charges(sell_turnover=entry_p * qty, buy_turnover=exit_price * qty)
+                pnl_pct = (entry_p - exit_price) / entry_p * 100
             net_pnl = gross_pnl - charges
-            pnl_pct = (entry_p - exit_price) / entry_p * 100
             actual_exit_time = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
             # Fetch real-time available margin balance directly from broker API

@@ -76,10 +76,10 @@ def get_active_channels(config: TradingConfig = CONFIG) -> List[BaseAlertChannel
     return channels
 
 
-def notify_trade_entry(symbol: str, price: float, sl: float, tp: float, qty: int, mode: str = "paper", config: TradingConfig = CONFIG) -> None:
+def notify_trade_entry(symbol: str, price: float, sl: float, tp: float, qty: int, direction: str = "SHORT", mode: str = "paper", config: TradingConfig = CONFIG) -> None:
     """Broadcasts a trade entry notification across all active channels."""
     for ch in get_active_channels(config):
-        ch.send_trade_entry(symbol=symbol, price=price, sl=sl, tp=tp, qty=qty, mode=mode)
+        ch.send_trade_entry(symbol=symbol, price=price, sl=sl, tp=tp, qty=qty, direction=direction, mode=mode)
 
 
 def notify_trailing_sl(symbol: str, be_price: float, mode: str = "paper", config: TradingConfig = CONFIG) -> None:

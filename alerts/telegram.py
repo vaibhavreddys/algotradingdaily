@@ -196,10 +196,11 @@ class TelegramAlertChannel(BaseAlertChannel):
         )
         return self.send_message(msg)
 
-    def send_trade_entry(self, symbol: str, price: float, sl: float, tp: float, qty: int, mode: str = "paper") -> bool:
+    def send_trade_entry(self, symbol: str, price: float, sl: float, tp: float, qty: int, direction: str = "SHORT", mode: str = "paper") -> bool:
+        side_str = "LONG (Buy)" if str(direction).upper() == "LONG" else "SHORT (Sell)"
         msg = (
             f"🔔 *[{mode.upper()} ENTRY]* `{symbol}`\n"
-            f"• *Side:* SHORT (Sell)\n"
+            f"• *Side:* {side_str}\n"
             f"• *Price:* ₹{price:,.2f}\n"
             f"• *Quantity:* {qty}\n"
             f"• *Stop-Loss:* ₹{sl:,.2f}\n"
