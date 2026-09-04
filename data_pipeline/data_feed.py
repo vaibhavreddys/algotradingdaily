@@ -34,6 +34,7 @@ CACHE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "marke
 
 BENCHMARK_INDEX_MAP = {
     "NIFTY50": "^NSEI",
+    "NIFTY200": "^CNX200",
     "BANKNIFTY": "^NSEBANK",
     "FINNIFTY": "NIFTY_FIN_SERVICE.NS",
     "INDIAVIX": "^INDIAVIX",
@@ -269,11 +270,41 @@ def fetch_nifty_benchmark(
       - If DuckDB exists, builds high-fidelity equal-weighted market index over the full DuckDB historical span.
       - Otherwise loads NIFTY 50 Benchmark (^NSEI) from local archive or yfinance.
     """
-    print(f"\n[1/3] Fetching Benchmark for Relative Weakness calculation (Universe: {universe})...")
-    
     is_broad_universe = universe.upper() in ("ALL", "NIFTY200")
+    bench_symbol = "NIFTY200" if is_broad_universe else "NIFTY50"
+    yf_symbol = "^CNX200" if is_broad_universe else "^NSEI"
 
-    # Tier 1A: Broad Market Composite (Equal-Weighted 200-Stock Average for NIFTY200/ALL)
+    print(f"\n[1/3] Fetching Benchmark for Relative Weakness calculation (Universe: {universe} -> {bench_symbol})...")
+    
+    # Tier 1: Stored Official Benchmark Index from DuckDB (NIFTY200 or NIFTY50)
+    if os.path.exists(settings.DB_PATH) and not force_refresh:
+        try:
+            reader = BacktestDataReader()
+            table_name = f"ohlcv_{interval}"
+            raw_df = reader.get_full_dataframe(symbol=bench_symbol, table=table_name)
+            if raw_df is not None and not raw_df.empty and len(raw_df) >= 50:
+                raw_df = raw_df.copy()
+                raw_df['Date'] = raw_df.index.date
+                daily_opens = raw_df.groupby('Date')['Open'].transform('first')
+                raw_df['Nifty_Pct'] = (raw_df['Close'] - daily_opens) / daily_opens
+                series = raw_df['Nifty_Pct']
+                _BENCHMARK_CACHE[cache_key] = series
+                return series
+        except Exception:
+            pass
+
+    # Tier 2: Real Benchmark from Yahoo Finance (^CNX200 or ^NSEI)
+    nifty_raw = load_candle_data(yf_symbol, period=period, interval=interval, force_refresh=force_refresh, verbose=False)
+    if nifty_raw is not None and not nifty_raw.empty and len(nifty_raw) >= 50:
+        nifty_raw = nifty_raw.copy()
+        nifty_raw['Date'] = nifty_raw.index.date
+        daily_opens = nifty_raw.groupby('Date')['Open'].transform('first')
+        nifty_raw['Nifty_Pct'] = (nifty_raw['Close'] - daily_opens) / daily_opens
+        series = nifty_raw['Nifty_Pct']
+        _BENCHMARK_CACHE[cache_key] = series
+        return series
+
+    # Tier 3: DuckDB Composite Fallback (Equal-Weighted 200-stock average if external index feeds fail)
     if is_broad_universe and os.path.exists(settings.DB_PATH) and not force_refresh:
         try:
             reader = BacktestDataReader()
@@ -317,34 +348,6 @@ def fetch_nifty_benchmark(
                     return series
         except Exception:
             pass
-
-    # Tier 1B: Stored NIFTY50 Cash Index from DuckDB (for NIFTY50 Universe)
-    if os.path.exists(settings.DB_PATH) and not force_refresh:
-        try:
-            reader = BacktestDataReader()
-            table_name = f"ohlcv_{interval}"
-            raw_df = reader.get_full_dataframe(symbol="NIFTY50", table=table_name)
-            if raw_df is not None and not raw_df.empty and len(raw_df) >= 50:
-                raw_df = raw_df.copy()
-                raw_df['Date'] = raw_df.index.date
-                daily_opens = raw_df.groupby('Date')['Open'].transform('first')
-                raw_df['Nifty_Pct'] = (raw_df['Close'] - daily_opens) / daily_opens
-                series = raw_df['Nifty_Pct']
-                _BENCHMARK_CACHE[cache_key] = series
-                return series
-        except Exception:
-            pass
-
-    # Tier 2: Real NIFTY 50 Benchmark (^NSEI) from archive / network (Fallback)
-    nifty_raw = load_candle_data("^NSEI", period=period, interval=interval, force_refresh=force_refresh, verbose=False)
-    if nifty_raw is not None and not nifty_raw.empty and len(nifty_raw) >= 50:
-        nifty_raw = nifty_raw.copy()
-        nifty_raw['Date'] = nifty_raw.index.date
-        daily_opens = nifty_raw.groupby('Date')['Open'].transform('first')
-        nifty_raw['Nifty_Pct'] = (nifty_raw['Close'] - daily_opens) / daily_opens
-        series = nifty_raw['Nifty_Pct']
-        _BENCHMARK_CACHE[cache_key] = series
-        return series
 
     print("⚠️ Warning: Could not fetch Nifty index data.")
     return pd.Series()
