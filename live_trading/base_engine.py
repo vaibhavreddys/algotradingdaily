@@ -203,7 +203,7 @@ class BaseTradingEngine:
     def prewarm_benchmark_feed(self) -> bool:
         """Pre-warms the benchmark feed ~5s before candle close to eliminate scanning latency."""
         try:
-            feed = fetch_nifty_benchmark(period="5d", interval=self.timeframe, force_refresh=True)
+            feed = fetch_nifty_benchmark(period="5d", interval=self.timeframe, force_refresh=True, universe=getattr(self.config, "UNIVERSE", "ALL"))
             if feed is not None and not feed.empty:
                 self._cached_benchmark = feed
                 self._benchmark_timestamp = datetime.datetime.now()
@@ -222,7 +222,7 @@ class BaseTradingEngine:
         ):
             return self._cached_benchmark
 
-        feed = fetch_nifty_benchmark(period="5d", interval=self.timeframe, force_refresh=True)
+        feed = fetch_nifty_benchmark(period="5d", interval=self.timeframe, force_refresh=True, universe=getattr(self.config, "UNIVERSE", "ALL"))
         self._cached_benchmark = feed
         self._benchmark_timestamp = now
         return feed

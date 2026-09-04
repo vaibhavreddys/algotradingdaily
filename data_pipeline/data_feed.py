@@ -269,9 +269,56 @@ def fetch_nifty_benchmark(
       - If DuckDB exists, builds high-fidelity equal-weighted market index over the full DuckDB historical span.
       - Otherwise loads NIFTY 50 Benchmark (^NSEI) from local archive or yfinance.
     """
-    print("\n[1/3] Fetching Benchmark for Relative Weakness calculation...")
+    print(f"\n[1/3] Fetching Benchmark for Relative Weakness calculation (Universe: {universe})...")
     
-    # Tier 1: DuckDB Stored NIFTY 50 Benchmark (Fastest, 100% Offline Parity)
+    is_broad_universe = universe.upper() in ("ALL", "NIFTY200")
+
+    # Tier 1A: Broad Market Composite (Equal-Weighted 200-Stock Average for NIFTY200/ALL)
+    if is_broad_universe and os.path.exists(settings.DB_PATH) and not force_refresh:
+        try:
+            reader = BacktestDataReader()
+            table_name = f"ohlcv_{interval}"
+            duck = reader._duck()
+            with reader._connect(duck) as conn:
+                exclude_symbols_clause = ", ".join(f"'{s}'" for s in BENCHMARK_INDEX_SYMBOLS)
+                query = f"""
+                    WITH daily_first AS (
+                        SELECT 
+                            symbol,
+                            CAST(timestamp AS DATE) as trade_date,
+                            arg_min(open, timestamp) as day_open
+                        FROM {table_name}
+                        WHERE symbol NOT IN ({exclude_symbols_clause})
+                        GROUP BY symbol, CAST(timestamp AS DATE)
+                    ),
+                    bar_pcts AS (
+                        SELECT 
+                            b.timestamp,
+                            (b.close - d.day_open) / d.day_open as pct_change
+                        FROM {table_name} b
+                        JOIN daily_first d 
+                          ON b.symbol = d.symbol 
+                         AND CAST(b.timestamp AS DATE) = d.trade_date
+                        WHERE b.symbol NOT IN ({exclude_symbols_clause})
+                    )
+                    SELECT 
+                        timestamp,
+                        AVG(pct_change) as avg_pct
+                    FROM bar_pcts
+                    GROUP BY timestamp
+                    ORDER BY timestamp
+                """
+                res_df = conn.execute(query).df()
+                if not res_df.empty:
+                    res_df['timestamp'] = reader._normalize_timestamp(res_df['timestamp'])
+                    res_df = res_df.set_index('timestamp')
+                    series = res_df['avg_pct']
+                    _BENCHMARK_CACHE[cache_key] = series
+                    return series
+        except Exception:
+            pass
+
+    # Tier 1B: Stored NIFTY50 Cash Index from DuckDB (for NIFTY50 Universe)
     if os.path.exists(settings.DB_PATH) and not force_refresh:
         try:
             reader = BacktestDataReader()
@@ -298,48 +345,6 @@ def fetch_nifty_benchmark(
         series = nifty_raw['Nifty_Pct']
         _BENCHMARK_CACHE[cache_key] = series
         return series
-
-    # Tier 2: DuckDB Fallback Index (if ^NSEI archive/network unavailable)
-    if os.path.exists(settings.DB_PATH) and not force_refresh:
-        try:
-            reader = BacktestDataReader()
-            table_name = f"ohlcv_{interval}"
-            duck = reader._duck()
-            with reader._connect(duck) as conn:
-                query = f"""
-                    WITH daily_first AS (
-                        SELECT 
-                            symbol,
-                            CAST(timestamp AS DATE) as trade_date,
-                            arg_min(open, timestamp) as day_open
-                        FROM {table_name}
-                        GROUP BY symbol, CAST(timestamp AS DATE)
-                    ),
-                    bar_pcts AS (
-                        SELECT 
-                            b.timestamp,
-                            (b.close - d.day_open) / d.day_open as pct_change
-                        FROM {table_name} b
-                        JOIN daily_first d 
-                          ON b.symbol = d.symbol 
-                         AND CAST(b.timestamp AS DATE) = d.trade_date
-                    )
-                    SELECT 
-                        timestamp,
-                        AVG(pct_change) as avg_pct
-                    FROM bar_pcts
-                    GROUP BY timestamp
-                    ORDER BY timestamp
-                """
-                res_df = conn.execute(query).df()
-                if not res_df.empty:
-                    res_df['timestamp'] = reader._normalize_timestamp(res_df['timestamp'])
-                    res_df = res_df.set_index('timestamp')
-                    series = res_df['avg_pct']
-                    _BENCHMARK_CACHE[cache_key] = series
-                    return series
-        except Exception:
-            pass
 
     print("⚠️ Warning: Could not fetch Nifty index data.")
     return pd.Series()
