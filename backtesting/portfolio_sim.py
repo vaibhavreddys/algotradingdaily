@@ -139,8 +139,8 @@ def scan_universe_signals(symbols, nifty_pct_map, config: TradingConfig = CONFIG
         # Sort chronologically by Entry Time, then by Strategy Confidence Score descending (highest conviction fills first)
         if 'Confidence Score' in df_signals.columns:
             df_signals = df_signals.sort_values(
-                by=['Entry Time', 'Confidence Score'],
-                ascending=[True, False]
+                by=['Entry Time', 'Confidence Score', 'Symbol'],
+                ascending=[True, False, True]
             ).reset_index(drop=True)
         else:
             sort_cols = [c for c in ['Entry Time', 'Symbol'] if c in df_signals.columns]

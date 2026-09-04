@@ -431,14 +431,14 @@ def _build_status_text(config: TradingConfig = CONFIG) -> str:
     try:
         from strategies.registry import load_strategy_instance
         s_name = getattr(config, 'ACTIVE_STRATEGY', 'vwap_stoch_trend')
-        s_ver = getattr(config, 'ACTIVE_STRATEGY_VERSION', 'v1_2')
+        s_ver = getattr(config, 'ACTIVE_STRATEGY_VERSION', 'v1_3')
         strat_inst = load_strategy_instance(s_name, s_ver)
         strat_name = getattr(strat_inst, 'NAME', 'VWAP-Stoch Trend')
-        strat_ver = getattr(strat_inst, 'VERSION', '1.2.0')
+        strat_ver = getattr(strat_inst, 'VERSION', '1.3.0')
         timeframe = getattr(strat_inst, 'TIMEFRAME', timeframe)
         strategy_line = f"{strat_name} v{strat_ver} ({timeframe})"
     except Exception:
-        strategy_line = f"VWAP-Stoch Trend v1.2.0 ({timeframe})"
+        strategy_line = f"VWAP-Stoch Trend v1.3.0 ({timeframe})"
     from core.capital import get_persisted_paper_capital
     cap = get_persisted_paper_capital(initial_capital=config.INITIAL_CAPITAL, mode=config.TRADING_MODE)
     universe = (config.UNIVERSE or "NIFTY50").upper()

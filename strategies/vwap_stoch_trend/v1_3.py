@@ -336,6 +336,7 @@ def simulate_single_trade(
     if not exit_t:
         return None
 
+    conf_score = float(df.iloc[entry_idx].get('Confidence_Score', 50.0))
     return {
         'Symbol': ticker,
         'Direction': direction,
@@ -346,5 +347,6 @@ def simulate_single_trade(
         'Stop Loss Price': sl,
         'Target Price': tp,
         'PnL %': pnl_pct,
-        'Result': result
+        'Result': result,
+        'Confidence Score': conf_score,
     }

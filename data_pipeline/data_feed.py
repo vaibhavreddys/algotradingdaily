@@ -254,7 +254,18 @@ def fetch_nifty_benchmark(
     """
     print("\n[1/3] Fetching Benchmark for Relative Weakness calculation...")
     
-    # Tier 1: DuckDB Full Historical Span Index
+    # Tier 1: Real NIFTY 50 Benchmark (^NSEI) from archive / network (Guarantees exact parity between Live and Backtest)
+    nifty_raw = load_candle_data("^NSEI", period=period, interval=interval, force_refresh=force_refresh, verbose=False)
+    if nifty_raw is not None and not nifty_raw.empty and len(nifty_raw) >= 50:
+        nifty_raw = nifty_raw.copy()
+        nifty_raw['Date'] = nifty_raw.index.date
+        daily_opens = nifty_raw.groupby('Date')['Open'].transform('first')
+        nifty_raw['Nifty_Pct'] = (nifty_raw['Close'] - daily_opens) / daily_opens
+        series = nifty_raw['Nifty_Pct']
+        _BENCHMARK_CACHE[cache_key] = series
+        return series
+
+    # Tier 2: DuckDB Fallback Index (if ^NSEI archive/network unavailable)
     if os.path.exists(settings.DB_PATH) and not force_refresh:
         try:
             reader = BacktestDataReader()
@@ -290,24 +301,14 @@ def fetch_nifty_benchmark(
                 if not res_df.empty:
                     res_df['timestamp'] = reader._normalize_timestamp(res_df['timestamp'])
                     res_df = res_df.set_index('timestamp')
-                    print(f"  🦆 Benchmark generated dynamically from DuckDB ({table_name} | {len(res_df)} candles)")
                     series = res_df['avg_pct']
                     _BENCHMARK_CACHE[cache_key] = series
                     return series
         except Exception:
             pass
 
-    # Tier 2: Local CSV Archive / yfinance
-    nifty_raw = load_candle_data("^NSEI", period=period, interval=interval, force_refresh=force_refresh)
-    if nifty_raw is None or nifty_raw.empty:
-        print("⚠️ Warning: Could not fetch Nifty index data.")
-        return pd.Series()
-
-    nifty_raw = nifty_raw.copy()
-    nifty_raw['Date'] = nifty_raw.index.date
-    daily_opens = nifty_raw.groupby('Date')['Open'].transform('first')
-    nifty_raw['Nifty_Pct'] = (nifty_raw['Close'] - daily_opens) / daily_opens
-    return nifty_raw['Nifty_Pct']
+    print("⚠️ Warning: Could not fetch Nifty index data.")
+    return pd.Series()
 
 
 def fetch_stock_candles(

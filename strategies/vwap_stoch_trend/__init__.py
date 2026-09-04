@@ -3,7 +3,7 @@ strategies/vwap_stoch_trend
 Bi-Directional Intraday Trend & Momentum Engine (Long + Short).
 """
 
-from .v1_0 import (
+from .v1_3 import (
     STRATEGY_NAME,
     STRATEGY_VERSION,
     TIMEFRAME,
