@@ -64,6 +64,62 @@ def update_duckdb():
         engine.ingest_date_range([clean_sym], start_date=start_date, end_date=today)
 
     # -----------------------------------------------------------------
+    # Pass 2: Ingest and align Benchmark Indices into DuckDB
+    # -----------------------------------------------------------------
+    from data_pipeline.data_feed import BENCHMARK_INDEX_MAP
+    print("\n-----------------------------------------------------")
+    print(f"      SYNCING {len(BENCHMARK_INDEX_MAP)} BENCHMARK INDICES INTO DUCKDB")
+    print("-----------------------------------------------------")
+    import yfinance as yf
+    import pandas as pd
+
+    con_w = duckdb.connect(str(db_path))
+    for idx_name, yf_symbol in BENCHMARK_INDEX_MAP.items():
+        max_idx_ts = symbol_latest_map.get(idx_name)
+        if max_idx_ts and (max_idx_ts + datetime.timedelta(days=1)).strftime("%Y-%m-%d") > today:
+            logger.info("Skip index %s: already up-to-date (Latest: %s)", idx_name, max_idx_ts)
+            continue
+
+        logger.info("Ingesting index %s (%s)...", idx_name, yf_symbol)
+        try:
+            df_idx = yf.download(yf_symbol, period="60d", interval="15m", progress=False)
+            if df_idx is not None and not df_idx.empty:
+                if isinstance(df_idx.columns, pd.MultiIndex):
+                    df_idx.columns = df_idx.columns.get_level_values(0)
+
+                idx_records = []
+                for ts_idx, r_idx in df_idx.iterrows():
+                    if pd.isna(r_idx['Close']):
+                        continue
+                    ts_dt = pd.to_datetime(ts_idx)
+                    if ts_dt.tzinfo is None:
+                        ts_dt = ts_dt.tz_localize("Asia/Kolkata")
+                    else:
+                        ts_dt = ts_dt.tz_convert("Asia/Kolkata")
+
+                    idx_records.append((
+                        ts_dt, idx_name, 'NSE',
+                        float(r_idx['Open']), float(r_idx['High']), float(r_idx['Low']), float(r_idx['Close']),
+                        int(r_idx.get('Volume', 0)) if not pd.isna(r_idx.get('Volume', 0)) else 0
+                    ))
+
+                if idx_records:
+                    con_w.executemany("""
+                        INSERT INTO ohlcv_1m (timestamp, symbol, exchange, open, high, low, close, volume)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT (timestamp, symbol, exchange) DO UPDATE SET
+                            open = excluded.open,
+                            high = excluded.high,
+                            low = excluded.low,
+                            close = excluded.close,
+                            volume = excluded.volume;
+                    """, idx_records)
+                    logger.info("  ✓ Synced %d bars for index %s", len(idx_records), idx_name)
+        except Exception as e:
+            logger.warning("  ⚠️ Could not ingest index %s: %s", idx_name, e)
+    con_w.close()
+
+    # -----------------------------------------------------------------
     # Auto-Rebuild all derived aggregate tables (15m, 5m, 1h, 1d)
     # -----------------------------------------------------------------
     print("\n📊 Rebuilding derived 15m/5m/1h/1d timeframe tables in DuckDB...")

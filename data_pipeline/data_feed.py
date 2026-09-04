@@ -32,6 +32,23 @@ if hasattr(sys.stdout, 'reconfigure'):
 
 CACHE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "market_data"))
 
+BENCHMARK_INDEX_MAP = {
+    "NIFTY50": "^NSEI",
+    "BANKNIFTY": "^NSEBANK",
+    "FINNIFTY": "NIFTY_FIN_SERVICE.NS",
+    "INDIAVIX": "^INDIAVIX",
+    "NIFTYIT": "^CNXIT",
+    "NIFTYAUTO": "^CNXAUTO",
+    "NIFTYPHARMA": "^CNXPHARMA",
+    "NIFTYFMCG": "^CNXFMCG",
+    "NIFTYMETAL": "^CNXMETAL",
+    "NIFTYENERGY": "^CNXENERGY",
+    "NIFTYREALTY": "^CNXREALTY",
+    "NIFTYMIDCAP100": "^CRSLDX",
+}
+BENCHMARK_INDEX_SYMBOLS = set(BENCHMARK_INDEX_MAP.keys())
+
+
 DEFAULT_NIFTY50_FALLBACK = [
     "GRASIM.NS", "DIXON.NS", "TATAMOTORS.NS", "INFY.NS", "RELIANCE.NS",
     "HDFCBANK.NS", "ICICIBANK.NS", "SBIN.NS", "BHARTIARTL.NS", "ITC.NS",
@@ -50,7 +67,7 @@ def get_available_symbols(universe: str = "NIFTY50") -> List[str]:
             reader = BacktestDataReader()
             symbols = reader.get_symbols(table="ohlcv_15m")
             if symbols:
-                clean_syms = sorted(list(set(symbols)))
+                clean_syms = sorted(list(set(symbols) - BENCHMARK_INDEX_SYMBOLS))
                 if universe.upper() == "NIFTY50":
                     nifty50_clean = set(s.replace(".NS", "").replace("^NSEI", "") for s in get_nifty50_symbols())
                     filtered = [s for s in clean_syms if s in nifty50_clean]
@@ -254,7 +271,24 @@ def fetch_nifty_benchmark(
     """
     print("\n[1/3] Fetching Benchmark for Relative Weakness calculation...")
     
-    # Tier 1: Real NIFTY 50 Benchmark (^NSEI) from archive / network (Guarantees exact parity between Live and Backtest)
+    # Tier 1: DuckDB Stored NIFTY 50 Benchmark (Fastest, 100% Offline Parity)
+    if os.path.exists(settings.DB_PATH) and not force_refresh:
+        try:
+            reader = BacktestDataReader()
+            table_name = f"ohlcv_{interval}"
+            raw_df = reader.get_full_dataframe(symbol="NIFTY50", table=table_name)
+            if raw_df is not None and not raw_df.empty and len(raw_df) >= 50:
+                raw_df = raw_df.copy()
+                raw_df['Date'] = raw_df.index.date
+                daily_opens = raw_df.groupby('Date')['Open'].transform('first')
+                raw_df['Nifty_Pct'] = (raw_df['Close'] - daily_opens) / daily_opens
+                series = raw_df['Nifty_Pct']
+                _BENCHMARK_CACHE[cache_key] = series
+                return series
+        except Exception:
+            pass
+
+    # Tier 2: Real NIFTY 50 Benchmark (^NSEI) from archive / network (Fallback)
     nifty_raw = load_candle_data("^NSEI", period=period, interval=interval, force_refresh=force_refresh, verbose=False)
     if nifty_raw is not None and not nifty_raw.empty and len(nifty_raw) >= 50:
         nifty_raw = nifty_raw.copy()
