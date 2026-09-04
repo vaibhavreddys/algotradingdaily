@@ -254,6 +254,52 @@ class VWAPStochTrendStrategyV13(BaseStrategy):
 
 
 STRATEGY_INSTANCE = VWAPStochTrendStrategyV13()
+VWAPStochTrendStrategy = VWAPStochTrendStrategyV13
+
+
+def calculate_stop_and_target(
+    entry_price: float,
+    swing_ref: float,
+    config: Optional[TradingConfig] = None,
+    direction: str = "SHORT",
+    **kwargs
+) -> Tuple[float, float, float]:
+    rr_ratio = getattr(config or CONFIG, 'RISK_REWARD_RATIO', STRATEGY_INSTANCE.RISK_REWARD_RATIO)
+    min_sl_buffer = STRATEGY_INSTANCE.MIN_SL_BUFFER_PCT
+    swing_sl_buffer = STRATEGY_INSTANCE.SWING_SL_BUFFER_PCT
+
+    if str(direction).upper() == "LONG":
+        sl_swing = swing_ref * (1.0 - swing_sl_buffer)
+        sl_min = entry_price * (1.0 - min_sl_buffer)
+        sl_price = min(sl_swing, sl_min)
+        risk = entry_price - sl_price
+        target_price = entry_price + (risk * rr_ratio)
+    else:
+        sl_swing = swing_ref * (1.0 + swing_sl_buffer)
+        sl_min = entry_price * (1.0 + min_sl_buffer)
+        sl_price = max(sl_swing, sl_min)
+        risk = sl_price - entry_price
+        target_price = entry_price - (risk * rr_ratio)
+
+    return round(sl_price, 2), round(target_price, 2), round(risk, 2)
+
+
+def calculate_trailing_stop(
+    entry_price: float,
+    current_sl: float,
+    current_close: float,
+    current_high: float,
+    current_low: float,
+    risk: float,
+    direction: str = "SHORT"
+) -> Optional[float]:
+    if str(direction).upper() == "LONG":
+        if current_high >= (entry_price + risk):
+            return max(current_sl, round(entry_price * 1.001, 2))
+    else:
+        if current_low <= (entry_price - risk):
+            return min(current_sl, round(entry_price * 0.999, 2))
+    return None
 
 
 def evaluate_signals(df: pd.DataFrame, nifty_pct_map: Optional[pd.Series] = None, config: Optional[TradingConfig] = None) -> Optional[pd.DataFrame]:
