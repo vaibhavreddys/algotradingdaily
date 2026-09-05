@@ -252,11 +252,7 @@ def fetch_nifty_benchmark(
     cache_key = f"{interval}_{universe}"
     if not force_refresh and cache_key in _BENCHMARK_CACHE:
         return _BENCHMARK_CACHE[cache_key]
-    """
-    Retrieves Benchmark for Relative Weakness calculation:
-      - If DuckDB exists, builds high-fidelity equal-weighted market index over the full DuckDB historical span.
-      - Otherwise loads NIFTY 50 Benchmark (^NSEI) from local archive or yfinance.
-    """
+
     # If TradingConfig object passed as first positional arg
     if hasattr(period, 'TIMEFRAME'):
         cfg = period
@@ -265,47 +261,13 @@ def fetch_nifty_benchmark(
     elif not isinstance(period, str):
         period = "60d"
 
-    """
-    Retrieves Benchmark for Relative Weakness calculation:
-      - If DuckDB exists, builds high-fidelity equal-weighted market index over the full DuckDB historical span.
-      - Otherwise loads NIFTY 50 Benchmark (^NSEI) from local archive or yfinance.
-    """
     is_broad_universe = universe.upper() in ("ALL", "NIFTY200")
-    bench_symbol = "NIFTY200" if is_broad_universe else "NIFTY50"
-    yf_symbol = "^CNX200" if is_broad_universe else "^NSEI"
+    bench_label = "Synthetic 200-Stock Composite" if is_broad_universe else "NIFTY 50"
 
-    print(f"\n[1/3] Fetching Benchmark for Relative Weakness calculation (Universe: {universe} -> {bench_symbol})...")
-    
-    # Tier 1: Stored Official Benchmark Index from DuckDB (NIFTY200 or NIFTY50)
-    if os.path.exists(settings.DB_PATH) and not force_refresh:
-        try:
-            reader = BacktestDataReader()
-            table_name = f"ohlcv_{interval}"
-            raw_df = reader.get_full_dataframe(symbol=bench_symbol, table=table_name)
-            if raw_df is not None and not raw_df.empty and len(raw_df) >= 50:
-                raw_df = raw_df.copy()
-                raw_df['Date'] = raw_df.index.date
-                daily_opens = raw_df.groupby('Date')['Open'].transform('first')
-                raw_df['Nifty_Pct'] = (raw_df['Close'] - daily_opens) / daily_opens
-                series = raw_df['Nifty_Pct']
-                _BENCHMARK_CACHE[cache_key] = series
-                return series
-        except Exception:
-            pass
+    print(f"\n[1/3] Fetching Benchmark for Relative Weakness calculation (Universe: {universe} -> {bench_label})...")
 
-    # Tier 2: Real Benchmark from Yahoo Finance (^CNX200 or ^NSEI)
-    nifty_raw = load_candle_data(yf_symbol, period=period, interval=interval, force_refresh=force_refresh, verbose=False)
-    if nifty_raw is not None and not nifty_raw.empty and len(nifty_raw) >= 50:
-        nifty_raw = nifty_raw.copy()
-        nifty_raw['Date'] = nifty_raw.index.date
-        daily_opens = nifty_raw.groupby('Date')['Open'].transform('first')
-        nifty_raw['Nifty_Pct'] = (nifty_raw['Close'] - daily_opens) / daily_opens
-        series = nifty_raw['Nifty_Pct']
-        _BENCHMARK_CACHE[cache_key] = series
-        return series
-
-    # Tier 3: DuckDB Composite Fallback (Equal-Weighted 200-stock average if external index feeds fail)
-    if is_broad_universe and os.path.exists(settings.DB_PATH) and not force_refresh:
+    # Tier 1 (Broad Universe): Synthetic 200-Stock Composite from DuckDB
+    if is_broad_universe and os.path.exists(settings.DB_PATH):
         try:
             reader = BacktestDataReader()
             table_name = f"ohlcv_{interval}"
@@ -340,14 +302,46 @@ def fetch_nifty_benchmark(
                     ORDER BY timestamp
                 """
                 res_df = conn.execute(query).df()
-                if not res_df.empty:
+                if not res_df.empty and len(res_df) >= 50:
                     res_df['timestamp'] = reader._normalize_timestamp(res_df['timestamp'])
                     res_df = res_df.set_index('timestamp')
                     series = res_df['avg_pct']
                     _BENCHMARK_CACHE[cache_key] = series
+                    print(f"      ✓ Loaded Synthetic 200-Stock Composite ({len(series)} bars across full historical span)")
                     return series
+        except Exception as e:
+            print(f"      ⚠️ DuckDB Synthetic Composite query failed: {e}")
+
+    # Tier 1 (Narrow Universe): Stored Official Benchmark Index from DuckDB (NIFTY50)
+    if not is_broad_universe and os.path.exists(settings.DB_PATH) and not force_refresh:
+        try:
+            reader = BacktestDataReader()
+            table_name = f"ohlcv_{interval}"
+            raw_df = reader.get_full_dataframe(symbol="NIFTY50", table=table_name)
+            if raw_df is not None and not raw_df.empty and len(raw_df) >= 50:
+                raw_df = raw_df.copy()
+                raw_df['Date'] = raw_df.index.date
+                daily_opens = raw_df.groupby('Date')['Open'].transform('first')
+                raw_df['Nifty_Pct'] = (raw_df['Close'] - daily_opens) / daily_opens
+                series = raw_df['Nifty_Pct']
+                _BENCHMARK_CACHE[cache_key] = series
+                print(f"      ✓ Loaded NIFTY50 Benchmark from DuckDB ({len(series)} bars)")
+                return series
         except Exception:
             pass
+
+    # Tier 2: Real Benchmark from Yahoo Finance (^CNX200 or ^NSEI)
+    yf_symbol = "^CNX200" if is_broad_universe else "^NSEI"
+    nifty_raw = load_candle_data(yf_symbol, period=period, interval=interval, force_refresh=force_refresh, verbose=False)
+    if nifty_raw is not None and not nifty_raw.empty and len(nifty_raw) >= 50:
+        nifty_raw = nifty_raw.copy()
+        nifty_raw['Date'] = nifty_raw.index.date
+        daily_opens = nifty_raw.groupby('Date')['Open'].transform('first')
+        nifty_raw['Nifty_Pct'] = (nifty_raw['Close'] - daily_opens) / daily_opens
+        series = nifty_raw['Nifty_Pct']
+        _BENCHMARK_CACHE[cache_key] = series
+        print(f"      ✓ Loaded {yf_symbol} Benchmark from Yahoo Finance ({len(series)} bars)")
+        return series
 
     print("⚠️ Warning: Could not fetch Nifty index data.")
     return pd.Series()
