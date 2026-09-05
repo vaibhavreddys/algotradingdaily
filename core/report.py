@@ -318,12 +318,25 @@ def print_daily_eod_report(
     trade_lines = []
     for idx, t in enumerate(day_trades, 1):
         sym = t.get('symbol', 'UNKNOWN')
-        ep = t.get('entry_price', 0.0)
-        xp = t.get('exit_price', 0.0)
+        ep = float(t.get('entry_price', 0.0) or 0.0)
+        xp = float(t.get('exit_price', 0.0) or 0.0)
+        qty = int(t.get('quantity', t.get('qty', 1)) or 1)
         raw_res = t.get('result', '')
         res = EXIT_DISPLAY_LABELS.get(raw_res, raw_res)
-        npnl = t.get('net_pnl', 0.0)
-        line = f"{idx}. {sym:<14}: SHORT @ ₹{ep:,.2f} -> {res} @ ₹{xp:,.2f} | Net: {'+' if npnl >= 0 else '-'}₹{abs(npnl):,.2f}"
+        npnl = float(t.get('net_pnl', 0.0) or 0.0)
+
+        # Determine trade direction (LONG vs SHORT)
+        direction = str(t.get('direction', '')).upper()
+        if direction not in ('LONG', 'SHORT'):
+            gp = float(t.get('gross_pnl', 0.0) or 0.0)
+            if (xp - ep) * gp > 0:
+                direction = 'LONG'
+            elif (xp - ep) * gp < 0:
+                direction = 'SHORT'
+            else:
+                direction = 'SHORT'
+
+        line = f"{idx}. {sym:<14}: {qty} {direction} @ ₹{ep:,.2f} -> {res} @ ₹{xp:,.2f} | Net: {'+' if npnl >= 0 else '-'}₹{abs(npnl):,.2f}"
         trade_lines.append(line)
         print(line)
 

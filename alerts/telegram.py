@@ -226,8 +226,12 @@ class TelegramAlertChannel(BaseAlertChannel):
         return self.send_message(msg)
 
     def send_eod_summary(self, report_text: str, mode: str = "paper") -> bool:
-        msg = (
-            f"📊 *[{mode.upper()} EOD REPORT]*\n\n"
-            f"{report_text}"
-        )
+        # If report_text already has the summary header, avoid duplicate header
+        if "Daily" in report_text and "Trading Summary" in report_text:
+            msg = report_text
+        else:
+            msg = (
+                f"📊 *[{mode.upper()} EOD REPORT]*\n\n"
+                f"{report_text}"
+            )
         return self.send_message(msg)

@@ -82,7 +82,8 @@ class PaperTradingEngine(BaseTradingEngine):
             order_type='MIS',
             entry_order_id='PAPER_ENTRY',
             sl_order_id='PAPER_SL',
-            mode="paper"
+            mode="paper",
+            direction=direction
         )
 
         dir_clean = str(direction).upper()
@@ -136,7 +137,8 @@ class PaperTradingEngine(BaseTradingEngine):
             gross_pnl=gross_pnl,
             taxes_fees=charges,
             net_pnl=net_pnl,
-            mode="paper"
+            mode="paper",
+            direction=pos.get('direction', 'SHORT')
         )
 
         display_result = EXIT_DISPLAY_LABELS.get(reason, reason)

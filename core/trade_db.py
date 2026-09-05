@@ -159,6 +159,14 @@ def init_db(mode: Optional[str] = None) -> None:
                 running_bal += float(pnl)
                 cursor.execute("UPDATE trade_history SET balance_after_trade = ? WHERE id = ?", (round(running_bal, 2), r_id))
 
+        if "direction" not in columns:
+            cursor.execute("ALTER TABLE trade_history ADD COLUMN direction TEXT DEFAULT 'SHORT';")
+
+        cursor.execute("PRAGMA table_info(active_positions);")
+        act_cols = [col[1] for col in cursor.fetchall()]
+        if "direction" not in act_cols:
+            cursor.execute("ALTER TABLE active_positions ADD COLUMN direction TEXT DEFAULT 'SHORT';")
+
         # 3. Performance Composite B-Tree Indexes
         cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_trades_exit_symbol 
@@ -204,13 +212,14 @@ def save_active_position(
         final_entry = round(float(entry_p if entry_p is not None else (entry_price if entry_price is not None else 0.0)), 2)
         final_sl = round(float(sl_p if sl_p is not None else (current_sl if current_sl is not None else (initial_sl if initial_sl is not None else 0.0))), 2)
         final_tp = round(float(tp_p if tp_p is not None else (target_price if target_price is not None else 0.0)), 2)
+        dir_clean = str(kwargs.get('direction', 'SHORT')).upper()
         cursor.execute("""
             INSERT OR REPLACE INTO active_positions 
-            (symbol, order_type, entry_order_id, sl_order_id, quantity, entry_price, initial_sl, current_sl, target_price, status, entry_time)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE', ?)
+            (symbol, order_type, entry_order_id, sl_order_id, quantity, entry_price, initial_sl, current_sl, target_price, status, entry_time, direction)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE', ?, ?)
         """, (
             symbol, order_type, str(entry_order_id or ""), str(sl_order_id or ""),
-            final_qty, final_entry, final_sl, final_sl, final_tp, now_str
+            final_qty, final_entry, final_sl, final_sl, final_tp, now_str, dir_clean
         ))
         conn.commit()
 
@@ -269,10 +278,11 @@ def close_and_archive_position(
             new_balance = round(CONFIG.INITIAL_CAPITAL + cum_pnl + float(net_pnl), 2)
 
         # 3. Insert into permanent trade_history
+        dir_clean = str(kwargs.get('direction') or pos_dict.get('direction', 'SHORT')).upper()
         cursor.execute("""
             INSERT INTO trade_history 
-            (symbol, order_type, entry_time, exit_time, entry_price, exit_price, quantity, result, gross_pnl, taxes_fees, net_pnl, balance_after_trade, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (symbol, order_type, entry_time, exit_time, entry_price, exit_price, quantity, result, gross_pnl, taxes_fees, net_pnl, balance_after_trade, created_at, direction)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             symbol,
             pos_dict.get("order_type", "BO"),
@@ -286,7 +296,8 @@ def close_and_archive_position(
             round(float(taxes_fees), 2),
             round(float(net_pnl), 2),
             new_balance,
-            now_str
+            now_str,
+            dir_clean
         ))
         
         # 3. Delete from active_positions

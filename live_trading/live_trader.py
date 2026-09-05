@@ -153,7 +153,8 @@ class LiveTradingEngine(BaseTradingEngine):
             order_type='MIS',
             entry_order_id=order_id,
             sl_order_id=sl_order_id,
-            mode='live'
+            mode='live',
+            direction=direction
         )
         print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] ✅ MIS Active: {symbol} (Order: {order_id} | Linked SL: {sl_order_id})")
         notify_trade_entry(symbol=symbol, price=entry_price, sl=sl_price, tp=tp_price, qty=qty, direction=dir_clean, mode="live", config=self.config)
@@ -271,7 +272,8 @@ class LiveTradingEngine(BaseTradingEngine):
                 taxes_fees=charges,
                 net_pnl=net_pnl,
                 balance_after_trade=broker_balance,
-                mode="live"
+                mode="live",
+                direction=pos.get('direction', 'SHORT')
             )
 
             display_result = EXIT_DISPLAY_LABELS.get(reason, reason)
