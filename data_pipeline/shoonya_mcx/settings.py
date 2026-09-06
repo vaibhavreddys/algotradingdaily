@@ -23,15 +23,47 @@ LOG_PATH = STORAGE_DIR / "ingestion.log"
 # -------------------------------------------------------------------------
 # Shoonya (Noren) Account Credentials
 # -------------------------------------------------------------------------
-SHOONYA_USER_ID = os.getenv("SHOONYA_USER_ID", "")
+# Post-OAuth (2026) Shoonya retired the vendor QuickAuth endpoint: the legacy
+# /NorenWClientTP/ base answers 502 and /NorenWClientAPI/QuickAuth rejects
+# every vendor-code shape ("Invalid Vendor code"). Sessions are therefore
+# minted by Shoonya's browser OAuth flow -- in practice by logging into the
+# co-hosted OpenAlgo instance -- and this pipeline *reuses* that session
+# token instead of logging in itself.
+SHOONYA_USER_ID = os.getenv("SHOONYA_USER_ID", "").strip()
+# Guard against the BROKER_API_KEY shape ("uid:::client_id") pasted whole:
+# the API rejects non-plain uids with "Invalid User Id".
+if ":::" in SHOONYA_USER_ID:
+    SHOONYA_USER_ID = SHOONYA_USER_ID.split(":::", 1)[0].strip()
+SHOONYA_HOST = os.getenv("SHOONYA_HOST", "https://api.shoonya.com/NorenWClientAPI/")
+SHOONYA_WS_URL = os.getenv("SHOONYA_WS_URL", "wss://api.shoonya.com/NorenWSTP/")
+
+# Manual override: a live susertoken (64-hex). Takes precedence over the
+# OpenAlgo database lookup.
+SHOONYA_SUSERTOKEN = os.getenv("SHOONYA_SUSERTOKEN", "")
+
+# Checkout of the OpenAlgo instance whose DB holds the OAuth susertoken.
+# Empty disables the DB lookup (then only SHOONYA_SUSERTOKEN can provide it).
+OPENALGO_DIR = os.getenv("OPENALGO_DIR", "")
+
+# Legacy vendor credentials -- no longer used for login, kept so old .env
+# files do not break validation.
 SHOONYA_PASSWORD = os.getenv("SHOONYA_PASSWORD", "")
-SHOONYA_TOTP_KEY = os.getenv("SHOONYA_TOTP_KEY", "")          # Base32 seed for 2FA
+SHOONYA_TOTP_KEY = os.getenv("SHOONYA_TOTP_KEY", "")
 SHOONYA_VENDOR_CODE = os.getenv("SHOONYA_VENDOR_CODE", "")
 SHOONYA_API_SECRET = os.getenv("SHOONYA_API_SECRET", "")
-SHOONYA_IMEI = os.getenv("SHOONYA_IMEI", "web")               # Stable device id string
+SHOONYA_IMEI = os.getenv("SHOONYA_IMEI", "web")
 
-SHOONYA_HOST = os.getenv("SHOONYA_HOST", "https://api.shoonya.com/NorenWClientTP/")
-SHOONYA_WS_URL = os.getenv("SHOONYA_WS_URL", "wss://api.shoonya.com/NorenWSTP/")
+# -------------------------------------------------------------------------
+# Instrument directory (scrip master)
+# -------------------------------------------------------------------------
+# MCX tokens are resolved from Shoonya's official scrip-master file rather
+# than the SearchScrip endpoint, which answers "Exchange Not enabled" for
+# MCX on retail OAuth apps even though TPSeries/GetQuotes serve MCX fine.
+SCRIP_MASTER_URL = os.getenv(
+    "SHOONYA_MCX_SCRIP_MASTER_URL", "https://api.shoonya.com/MCX_symbols.txt.zip"
+)
+SCRIP_MASTER_PATH = STORAGE_DIR / "MCX_symbols.txt"
+SCRIP_MASTER_MAX_AGE_HOURS = float(os.getenv("SHOONYA_MCX_SCRIP_MASTER_TTL_HOURS", "24"))
 
 # -------------------------------------------------------------------------
 # Ingestion Constants
@@ -39,10 +71,13 @@ SHOONYA_WS_URL = os.getenv("SHOONYA_WS_URL", "wss://api.shoonya.com/NorenWSTP/")
 # '1' = 1-minute candles, the smallest resolution the TPSeries endpoint serves.
 INTERVAL = os.getenv("SHOONYA_MCX_INTERVAL", "1")
 
-# Nominal forward chunk width in days. Shoonya caps each TPSeries response
-# (~MAX_CANDLES_PER_REQUEST candles), so any chunk that saturates the cap is
-# adaptively bisected until it fits; this value only bounds the request shape.
-CHUNK_SIZE_DAYS = int(os.getenv("SHOONYA_MCX_CHUNK_SIZE_DAYS", "30"))
+# Forward chunk width in days. The new gateway kills long TPSeries ranges
+# with 504 Server Timeout instead of silently truncating (the legacy
+# behaviour the ~1000-candle cap described); 3 days of 1-minute MCX candles
+# (~2600 rows) is comfortably inside the observed ~5-day limit.
+CHUNK_SIZE_DAYS = int(os.getenv("SHOONYA_MCX_CHUNK_SIZE_DAYS", "3"))
+# Safety net: a chunk whose response still carries at least this many candles
+# is bisected further (per-request truncation guard).
 MAX_CANDLES_PER_REQUEST = int(os.getenv("SHOONYA_MCX_MAX_CANDLES", "1000"))
 
 # Politeness controls to stay inside Shoonya's rate limits (~2 req/sec).
@@ -65,21 +100,12 @@ IST = dt.timezone(dt.timedelta(hours=5, minutes=30), name="IST")
 
 def validate_settings() -> None:
     """Fail fast on missing credentials or unsafe tuning values."""
-    missing = [
-        name
-        for name, value in (
-            ("SHOONYA_USER_ID", SHOONYA_USER_ID),
-            ("SHOONYA_PASSWORD", SHOONYA_PASSWORD),
-            ("SHOONYA_TOTP_KEY", SHOONYA_TOTP_KEY),
-            ("SHOONYA_VENDOR_CODE", SHOONYA_VENDOR_CODE),
-            ("SHOONYA_API_SECRET", SHOONYA_API_SECRET),
-        )
-        if not value
-    ]
-    if missing:
+    if not SHOONYA_USER_ID:
+        raise RuntimeError("Missing Shoonya credentials: SHOONYA_USER_ID. Set it in .env.")
+    if not SHOONYA_SUSERTOKEN and not OPENALGO_DIR:
         raise RuntimeError(
-            "Missing Shoonya credentials: " + ", ".join(missing)
-            + ". Set them in .env or the environment."
+            "No session-token source: set SHOONYA_SUSERTOKEN or OPENALGO_DIR "
+            "(pointing at the OpenAlgo checkout whose DB holds the OAuth session)."
         )
     if DELAY_SECONDS < 0 or PROBE_DELAY_SECONDS < 0:
         raise RuntimeError("Delay settings cannot be negative.")

@@ -1,50 +1,69 @@
 #!/bin/bash
 # =====================================================================
-# OpenAlgo systemd Background Daemon Installer (Production Safe)
+# OpenAlgo systemd Service Installer (post-OAuth edition, 2026-09)
 # =====================================================================
+# Installs/refreshes the `openalgo.service` unit matching the proven
+# production layout on the reference VM:
+#   - repo checkout at $HOME/openalgo
+#   - venv at $HOME/openalgo/.venv (falls back: $HOME/openalgo/venv)
+#   - app.py patched with allow_unsafe_werkzeug=True (flask-socketio
+#     refuses the Werkzeug server in production mode otherwise)
+#
+# Run from anywhere:  bash scripts/install_openalgo_service.sh
+# Idempotent: re-running overwrites the unit file and restarts the service.
 
 set -e
 
-# Dynamically resolve user, home, and parent workspace
 CURRENT_USER="${USER:-$(whoami)}"
 USER_HOME="${HOME:-$(eval echo ~$CURRENT_USER)}"
-TRADING_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-OPENALGO_DIR="$TRADING_ROOT/openalgo/openalgo"
 
-# Dynamically resolve Python virtual environment
-if [ -n "$VIRTUAL_ENV" ] && [ -f "$VIRTUAL_ENV/bin/python" ]; then
-    PYTHON_BIN="$VIRTUAL_ENV/bin/python"
-elif [ -f "$OPENALGO_DIR/venv/bin/python" ]; then
-    PYTHON_BIN="$OPENALGO_DIR/venv/bin/python"
-elif [ -f "$TRADING_ROOT/algotradingdaily/venv/bin/python" ]; then
-    PYTHON_BIN="$TRADING_ROOT/algotradingdaily/venv/bin/python"
-else
-    PYTHON_BIN="$(which python3)"
+# Resolve the OpenAlgo checkout: $HOME/openalgo (reference layout) or siblings.
+for candidate in "$USER_HOME/openalgo" "$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/openalgo"; do
+    if [ -f "$candidate/app.py" ]; then
+        OPENALGO_DIR="$candidate"
+        break
+    fi
+done
+if [ -z "${OPENALGO_DIR:-}" ]; then
+    echo "FATAL: could not locate an OpenAlgo checkout containing app.py" >&2
+    exit 1
 fi
 
+# Resolve the Python interpreter: openalgo venv first, then sibling venvs.
+for candidate in "$OPENALGO_DIR/.venv/bin/python" "$OPENALGO_DIR/venv/bin/python"; do
+    if [ -x "$candidate" ]; then
+        PYTHON_BIN="$candidate"
+        break
+    fi
+done
+PYTHON_BIN="${PYTHON_BIN:-$(which python3)}"
+
 echo "====================================================="
-echo " Installing Production-Safe OpenAlgo Service"
+echo " Installing OpenAlgo systemd service"
 echo " User:       ${CURRENT_USER}"
 echo " Directory:  ${OPENALGO_DIR}"
 echo " Python:     ${PYTHON_BIN}"
 echo "====================================================="
 
-# 1. Patch app.py to allow Werkzeug server in daemon mode if not already patched
+# 1. Patch app.py so flask-socketio accepts the Werkzeug server headless.
 if grep -q "allow_unsafe_werkzeug" "${OPENALGO_DIR}/app.py"; then
     echo "✅ app.py already patched with allow_unsafe_werkzeug=True"
 else
     echo "Patching app.py with allow_unsafe_werkzeug=True..."
     sed -i 's/socketio\.run(app, host=host_ip, port=port, debug=debug, reloader_options=reloader_options)/socketio.run(app, host=host_ip, port=port, debug=debug, allow_unsafe_werkzeug=True, reloader_options=reloader_options)/g' "${OPENALGO_DIR}/app.py"
-    echo "✅ app.py patched successfully!"
+    grep -q "allow_unsafe_werkzeug" "${OPENALGO_DIR}/app.py" \
+        && echo "✅ app.py patched successfully!" \
+        || { echo "FATAL: patch did not apply — socketio.run call not found" >&2; exit 1; }
 fi
 
-# 2. Write systemd service file
-SERVICE_FILE="/etc/systemd/system/openalgo.service"
-
-sudo bash -c "cat << 'EOF' > ${SERVICE_FILE}
+# 2. Write the systemd unit. NOTE: a plain `systemctl reload openalgo` is
+#    NOT applicable (Type=simple, no ExecReload); the auto-login script
+#    therefore *restarts* the unit to refresh its in-process auth cache.
+sudo bash -c "cat << 'EOF' > /etc/systemd/system/openalgo.service
 [Unit]
 Description=OpenAlgo Unified Broker Gateway
-After=network.target
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
@@ -66,5 +85,6 @@ sudo systemctl enable openalgo
 sudo systemctl restart openalgo
 
 echo ""
-echo "✅ OpenAlgo service successfully installed and started!"
-echo "   Status: sudo systemctl status openalgo"
+echo "✅ OpenAlgo service installed and started!"
+echo "   Status:  systemctl status openalgo"
+echo "   Health:  curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:5000/"

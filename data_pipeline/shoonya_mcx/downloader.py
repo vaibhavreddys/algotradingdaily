@@ -2,39 +2,51 @@
 
 Pipeline per commodity:
 
-1. Authenticate once with TOTP-based 2FA (``QuickAuth``).
-2. Resolve the current front-month futures token via ``SearchScrip``.
+1. Reuse a valid session token (``session.py`` -- Shoonya's OAuth flow mints
+   it; this engine only validates it with a ``Limits`` probe).
+2. Resolve the current front-month futures token from the official MCX
+   scrip master (``symbols.py``).
 3. Binary-search the earliest date Shoonya serves minute candles for.
 4. Walk forward in date chunks, pulling TPSeries 1-minute candles and
    adaptively bisecting any chunk that saturates the per-request candle cap.
 5. Upsert into ``commodity_prices`` (composite PK on symbol+timestamp makes
    every run idempotent, so overlapping pulls never duplicate rows).
 
-The engine is deliberately parameterised by its symbol registry and exchange
-so a future forex module can reuse the same structure.
+Transport notes (2026 OAuth migration): the legacy ``/NorenWClientTP/`` base
+was decommissioned and answers 502; all traffic goes to
+``/NorenWClientAPI/`` with ``jData=<json>&jKey=<susertoken>`` form bodies.
+The gateway now kills long TPSeries ranges with 504 instead of silently
+truncating, so chunks are narrower (3 days of 1-minute candles).
 """
 
 import datetime as dt
+import json
 import logging
 import time
 from collections.abc import Iterable, Mapping
-from typing import Any, Callable
+from typing import Any
 
 import pandas as pd
-import pyotp
+import requests
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from . import settings
-from .symbols import MCX_COMMODITIES, resolve_active_token
+from .session import SessionTokenError, load_session_token
+from .symbols import (
+    MCX_COMMODITIES,
+    ScripMasterCache,
+    SymbolResolutionError,
+    resolve_active_token,
+)
 
 logger = logging.getLogger(__name__)
 
-# Shoonya candle strings arrive as e.g. "24-Jan-2025 09:15:00" (IST).
-CANDLE_TIME_FORMAT = "%d-%b-%Y %H:%M:%S"
+# Post-OAuth TPSeries candle strings arrive as e.g. "04-09-2026 23:29:00" (IST).
+CANDLE_TIME_FORMAT = "%d-%m-%Y %H:%M:%S"
 
 
 class ShoonyaAuthError(RuntimeError):
-    """Login failed or the session token expired irrecoverably."""
+    """No valid session token, or the broker rejected it."""
 
 
 class ShoonyaGatewayError(RuntimeError):
@@ -48,22 +60,65 @@ class ShoonyaHistoryError(RuntimeError):
     """A TPSeries request failed at the transport or protocol level."""
 
 
-def _load_noren_api() -> Callable[..., Any]:
-    try:
-        from NorenRestApiPy.NorenApi import NorenApi
-    except ImportError as exc:
-        raise RuntimeError(
-            "NorenRestApiPy is not installed. Run `pip install -r requirements.txt`."
-        ) from exc
-    return NorenApi
+class ShoonyaHttpClient:
+    """Minimal NorenWClientAPI transport: jData/jKey form bodies.
 
+    Method-compatible with the legacy NorenRestApiPy surface the engine
+    consumes (``get_limits``, ``get_time_price_series``) so tests can inject
+    fakes.
+    """
 
-def _load_duckdb() -> Any:
-    try:
-        import duckdb
-    except ImportError as exc:
-        raise RuntimeError("DuckDB support is not installed. Run `pip install -r requirements.txt`.") from exc
-    return duckdb
+    def __init__(self, host: str, user_id: str, session_token: str, timeout: float = 60.0) -> None:
+        self._host = host.rstrip("/")
+        self._user_id = user_id
+        self.session_token = session_token
+        self._timeout = timeout
+
+    def _post(self, endpoint: str, payload: Mapping[str, Any]) -> Any:
+        body = "jData=" + json.dumps(dict(payload)) + "&jKey=" + self.session_token
+        try:
+            response = requests.post(
+                f"{self._host}/{endpoint}",
+                data=body.encode("utf-8"),
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+                timeout=self._timeout,
+            )
+        except requests.RequestException as exc:
+            raise ShoonyaGatewayError(f"Shoonya gateway unreachable on {endpoint}: {exc}") from exc
+        if response.status_code >= 500:
+            raise ShoonyaGatewayError(
+                f"Shoonya gateway HTTP {response.status_code} on {endpoint}"
+            )
+        try:
+            return response.json()
+        except ValueError as exc:
+            raise ShoonyaGatewayError(
+                f"Shoonya returned non-JSON on {endpoint} (HTTP {response.status_code}): "
+                f"{response.text[:200]}"
+            ) from exc
+
+    def get_limits(self) -> dict | None:
+        """Cheap authenticated probe: returns the limits dict, or None."""
+        response = self._post("Limits", {"uid": self._user_id, "actid": self._user_id})
+        if isinstance(response, dict) and response.get("stat") == "Ok":
+            return response
+        return None
+
+    def get_time_price_series(
+        self, exchange: str, token: str, starttime: float, endtime: float, interval: str
+    ) -> list[dict] | dict:
+        """One TPSeries call: candle list on success, error dict otherwise."""
+        return self._post(
+            "TPSeries",
+            {
+                "uid": self._user_id,
+                "exch": exchange,
+                "token": str(token),
+                "st": str(int(starttime)),
+                "et": str(int(endtime)),
+                "intrv": str(interval),
+            },
+        )
 
 
 def _to_ist_date(value: str | dt.date) -> dt.date:
@@ -83,13 +138,17 @@ def _day_end(date: dt.date) -> dt.datetime:
 class MCXIngestionEngine:
     """Throttled, crash-tolerant downloader for Shoonya MCX minute candles."""
 
-    def __init__(self, api: Any = None, duckdb_module: Any = None) -> None:
+    def __init__(
+        self,
+        api: Any = None,
+        duckdb_module: Any = None,
+        scrip_cache: ScripMasterCache | None = None,
+    ) -> None:
         self._duckdb = duckdb_module or _load_duckdb()
-        noren_api = api or _load_noren_api()(
-            host=settings.SHOONYA_HOST,
-            websocket=settings.SHOONYA_WS_URL,
+        self._api = api
+        self._scrip_cache = scrip_cache or ScripMasterCache(
+            settings.SCRIP_MASTER_URL, settings.SCRIP_MASTER_PATH, settings.SCRIP_MASTER_MAX_AGE_HOURS
         )
-        self.api = noren_api
         self._token_cache: dict[str, str] = {}
         self._authenticated = False
         self._init_duckdb()
@@ -97,30 +156,13 @@ class MCXIngestionEngine:
     # ------------------------------------------------------------------
     # Authentication
     # ------------------------------------------------------------------
-    def _login_once(self) -> Mapping[str, Any] | None:
-        """Single QuickAuth attempt with a freshly generated TOTP code.
+    @property
+    def api(self) -> Any:
+        return self._api
 
-        The Noren client parses the response with ``json.loads`` before
-        checking status, so a gateway 5xx (HTML error page) surfaces as a
-        JSON decode error -- translate those into a retryable gateway error.
-        """
-        otp = pyotp.TOTP(settings.SHOONYA_TOTP_KEY).now()
-        try:
-            return self.api.login(
-                userid=settings.SHOONYA_USER_ID,
-                password=settings.SHOONYA_PASSWORD,
-                twoFA=otp,
-                vendor_code=settings.SHOONYA_VENDOR_CODE,
-                api_secret=settings.SHOONYA_API_SECRET,
-                imei=settings.SHOONYA_IMEI,
-            )
-        except (ValueError, OSError) as exc:
-            # ValueError: JSONDecodeError on non-JSON body. OSError: requests
-            # connection/timeout errors (RequestException subclasses IOError).
-            raise ShoonyaGatewayError(
-                f"Shoonya gateway returned a non-JSON response or was unreachable "
-                f"(likely HTTP 5xx / maintenance): {exc}"
-            ) from exc
+    @api.setter
+    def api(self, value: Any) -> None:
+        self._api = value
 
     @retry(
         stop=stop_after_attempt(settings.MAX_RETRIES),
@@ -128,30 +170,64 @@ class MCXIngestionEngine:
         retry=retry_if_exception_type(ShoonyaGatewayError),
         reraise=True,
     )
-    def login(self) -> None:
-        """Authenticate against Shoonya, retrying transient gateway failures."""
+    def _probe_limits(self) -> bool:
+        """Limits probe; gateway failures retry, rejections return False."""
+        return self._api.get_limits() is not None
+
+    def authenticate(self) -> None:
+        """Source a session token and validate it against /Limits.
+
+        Shoonya's OAuth flow (used by the co-hosted OpenAlgo instance) is the
+        only way to mint a token since vendor QuickAuth was retired; this
+        engine reuses it. An injected ``api`` (tests) skips token sourcing.
+        """
         settings.validate_settings()
-        response = self._login_once()
-        if not response or response.get("stat") != "Ok":
-            raise ShoonyaAuthError("Shoonya login rejected (check credentials / TOTP clock skew).")
+        if self._api is None:
+            try:
+                token, source = load_session_token(
+                    susertoken=settings.SHOONYA_SUSERTOKEN,
+                    openalgo_dir=settings.OPENALGO_DIR,
+                )
+            except SessionTokenError as exc:
+                raise ShoonyaAuthError(str(exc)) from exc
+            self._api = ShoonyaHttpClient(
+                settings.SHOONYA_HOST, settings.SHOONYA_USER_ID, token
+            )
+            logger.info("Using Shoonya session token from %s", source)
+
+        try:
+            alive = self._probe_limits()
+        except ShoonyaGatewayError:
+            raise
+        if not alive:
+            raise ShoonyaAuthError(
+                "Shoonya rejected the session token (expired or revoked). "
+                "Re-login via the OpenAlgo web UI (OAuth) and rerun; the fresh "
+                "token is picked up from OpenAlgo's database automatically."
+            )
         self._authenticated = True
-        logger.info("Authenticated with Shoonya as %s", settings.SHOONYA_USER_ID)
+        logger.info("Shoonya session validated for %s", settings.SHOONYA_USER_ID)
+
+    # Kept for callers of the old name.
+    login = authenticate
 
     def _session_alive(self) -> bool:
         """Cheap liveness probe: Limits succeeds only with a valid token."""
         try:
-            return self.api.get_limits() is not None
+            return self._api.get_limits() is not None
         except Exception:
             return False
 
     def _ensure_session(self) -> None:
-        """Re-authenticate transparently when the daily token has expired."""
+        """Re-validate the session, re-sourcing the token when it expired."""
         if not self._authenticated:
-            self.login()
+            self.authenticate()
             return
         if not self._session_alive():
-            logger.warning("Shoonya session token expired; re-authenticating...")
-            self.login()
+            logger.warning("Shoonya session token rejected; re-sourcing from disk...")
+            self._authenticated = False
+            self._api = None
+            self.authenticate()
 
     # ------------------------------------------------------------------
     # DuckDB schema
@@ -239,50 +315,72 @@ class MCXIngestionEngine:
         probing Limits before giving up -- used during downloads where data
         is expected, skipped during boundary probes to halve request volume.
         """
-        try:
-            rows = self.api.get_time_price_series(
-                exchange=exchange,
-                token=token,
-                starttime=start.timestamp(),
-                endtime=end.timestamp(),
-                interval=settings.INTERVAL,
-            )
-        except Exception as exc:
-            raise ShoonyaHistoryError(f"TPSeries request failed: {exc}") from exc
+        rows = self._api.get_time_price_series(
+            exchange=exchange,
+            token=token,
+            starttime=start.timestamp(),
+            endtime=end.timestamp(),
+            interval=settings.INTERVAL,
+        )
 
         if isinstance(rows, list):
             return rows
 
-        # None => the API answered with an error document.
-        if check_session and not self._session_alive():
-            logger.warning("Shoonya session expired mid-download; re-authenticating and retrying.")
-            self.login()
-            rows = self.api.get_time_price_series(
-                exchange=exchange,
-                token=token,
-                starttime=start.timestamp(),
-                endtime=end.timestamp(),
-                interval=settings.INTERVAL,
-            )
-            if isinstance(rows, list):
-                return rows
+        # Error document => maybe a dead token rather than an empty window.
+        if check_session:
+            if not self._session_alive():
+                logger.warning("Shoonya session expired mid-download; re-sourcing token.")
+                self._authenticated = False
+                self._api = None
+                self.authenticate()
+                rows = self._api.get_time_price_series(
+                    exchange=exchange,
+                    token=token,
+                    starttime=start.timestamp(),
+                    endtime=end.timestamp(),
+                    interval=settings.INTERVAL,
+                )
+                if isinstance(rows, list):
+                    return rows
         return []
 
     @staticmethod
     def _rows_to_frame(rows: list[dict], symbol: str) -> pd.DataFrame:
-        """Normalise raw TPSeries dicts into the strict DuckDB schema."""
+        """Normalise raw TPSeries dicts into the strict DuckDB schema.
+
+        Post-OAuth candles carry ``into/inth/intl/intc/intv`` and an integer
+        ``ssboe`` (UTC epoch). Zero-OHLC rows are stale ticks and dropped.
+        """
         if not rows:
             return pd.DataFrame(
                 columns=["symbol", "timestamp", "open", "high", "low", "close", "volume"]
             )
         frame = pd.DataFrame(rows)
+        if isinstance(frame, pd.DataFrame) and frame.empty:
+            return pd.DataFrame(
+                columns=["symbol", "timestamp", "open", "high", "low", "close", "volume"]
+            )
         frame = frame.rename(
-            columns={"ot": "open", "hi": "high", "lo": "low", "cl": "close", "vol": "volume"}
+            columns={"into": "open", "inth": "high", "intl": "low", "intc": "close", "intv": "volume"}
         )
-        frame["timestamp"] = pd.to_datetime(frame["time"], format=CANDLE_TIME_FORMAT, errors="coerce")
+        if "ssboe" in frame.columns:
+            # ssboe arrives as a string; pandas returns NaT for string input
+            # when unit= is set, so coerce to numeric before parsing.
+            frame["timestamp"] = (
+                pd.to_datetime(pd.to_numeric(frame["ssboe"], errors="coerce"), unit="s", utc=True)
+                .dt.tz_convert(settings.IST)
+                .dt.tz_localize(None)
+            )
+        else:
+            frame["timestamp"] = pd.to_datetime(frame["time"], format=CANDLE_TIME_FORMAT, errors="coerce")
         for column in ("open", "high", "low", "close", "volume"):
             frame[column] = pd.to_numeric(frame[column], errors="coerce")
         frame = frame.dropna(subset=["timestamp", "close"])
+        stale = (
+            (frame["open"] == 0) & (frame["high"] == 0)
+            & (frame["low"] == 0) & (frame["close"] == 0)
+        )
+        frame = frame[~stale]
         frame["volume"] = frame["volume"].fillna(0).clip(lower=0).astype("int64")
         frame["symbol"] = symbol
         return frame[["symbol", "timestamp", "open", "high", "low", "close", "volume"]]
@@ -354,9 +452,9 @@ class MCXIngestionEngine:
     ) -> pd.DataFrame:
         """Fetch one chunk, bisecting whenever the response hits the cap.
 
-        TPSeries silently truncates at ~1000 candles; a saturated response
-        is therefore split in half and re-requested until each sub-window
-        returns fewer rows than the cap (or is already a single day).
+        The gateway kills long TPSeries ranges with 504 (retried upstream)
+        and any response that still saturates the candle cap is split in
+        half until each sub-window fits (or is already a single day).
         """
         rows = self._tps(exchange, token, _day_start(start), _day_end(end), check_session=True)
         frame = self._rows_to_frame(rows, symbol)
@@ -399,8 +497,9 @@ class MCXIngestionEngine:
         """Resolve (and memoise) the active token for a commodity."""
         config = MCX_COMMODITIES[commodity]
         if commodity not in self._token_cache:
-            self._ensure_session()
-            self._token_cache[commodity] = resolve_active_token(self.api, commodity, config)
+            self._token_cache[commodity] = resolve_active_token(
+                commodity, config, self._scrip_cache.rows()
+            )
         return str(config["exchange"]), self._token_cache[commodity]
 
     def ingest_commodity(
@@ -466,9 +565,9 @@ class MCXIngestionEngine:
         end_date: str | dt.date | None = None,
         refresh_boundary: bool = False,
     ) -> int:
-        """Authenticate once, then ingest each commodity sequentially."""
+        """Validate the session once, then ingest each commodity sequentially."""
         commodities = list(commodities or MCX_COMMODITIES)
-        self.login()
+        self.authenticate()
         grand_total = 0
         failures: list[str] = []
         for commodity in commodities:
@@ -477,7 +576,10 @@ class MCXIngestionEngine:
                     commodity, start_date=start_date, end_date=end_date,
                     refresh_boundary=refresh_boundary,
                 )
-            except (ShoonyaAuthError, ShoonyaGatewayError, ShoonyaHistoryError, KeyError, TimeoutError) as exc:
+            except (
+                ShoonyaAuthError, ShoonyaGatewayError, ShoonyaHistoryError,
+                SymbolResolutionError, KeyError, TimeoutError,
+            ) as exc:
                 failures.append(commodity)
                 logger.error("Ingestion failed for %s: %s", commodity, exc)
         if failures:
@@ -502,3 +604,11 @@ class MCXIngestionEngine:
             ).df()
         finally:
             con.close()
+
+
+def _load_duckdb() -> Any:
+    try:
+        import duckdb
+    except ImportError as exc:
+        raise RuntimeError("DuckDB support is not installed. Run `pip install -r requirements.txt`.") from exc
+    return duckdb
