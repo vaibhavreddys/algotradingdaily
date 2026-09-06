@@ -285,8 +285,8 @@ import duckdb
 REPO_ROOT = Path(__file__).resolve().parents[1]
 APP_DIR = Path(__file__).resolve().parent
 DEFAULT_DB = REPO_ROOT / "market_data" / "openalgo" / "backtest_data.duckdb"
-TABLES = ("ohlcv_1m", "ohlcv_5m", "ohlcv_15m", "ohlcv_1h", "ohlcv_1d")
 MAX_LIMIT = 100_000
+CANDLE_REQUIRED_COLS = {"timestamp", "open", "high", "low", "close"}
 SYMBOL_RE = re.compile(r"^[A-Z0-9&_.\-]{1,30}$")
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
@@ -331,10 +331,51 @@ def db_connect(db_path: Path):
         raise ApiError(503, f"Cannot open database: {exc}")
 
 
-def validate_table(table: str) -> str:
-    if table not in TABLES:
-        raise ApiError(400, f"Unknown timeframe table '{table}'. Allowed: {list(TABLES)}")
+def quote_ident(name: str) -> str:
+    return '"' + name.replace('"', '""') + '"'
+
+
+def candle_tables(con) -> list[str]:
+    """Tables in the current DB that look like OHLCV stores (schema-agnostic)."""
+    out = []
+    for (name,) in con.execute("SHOW TABLES").fetchall():
+        try:
+            cols = {str(r[0]).lower() for r in con.execute(f"DESCRIBE {quote_ident(name)}").fetchall()}
+        except duckdb.Error:
+            continue
+        if CANDLE_REQUIRED_COLS <= cols:
+            out.append(name)
+    return out
+
+
+def resolve_table(con, table: str | None) -> str:
+    tables = candle_tables(con)
+    if not tables:
+        raise ApiError(400, "No OHLCV-style tables found in this database.")
+    if table is None:
+        return "ohlcv_1m" if "ohlcv_1m" in tables else tables[0]
+    if table not in tables:
+        raise ApiError(400, f"Table '{table}' not in this database. Available: {tables}")
     return table
+
+
+def resolve_request_db(params) -> Path:
+    """Per-request DB override (?db=...); must be a .duckdb inside market_data/."""
+    vals = params.get("db")
+    if not vals or not vals[0].strip():
+        return Handler.db_path
+    base = (REPO_ROOT / "market_data").resolve()
+    candidate = Path(vals[0].strip())
+    if not candidate.is_absolute():
+        candidate = REPO_ROOT / candidate
+    candidate = candidate.resolve()
+    if candidate.suffix != ".duckdb":
+        raise ApiError(400, "Only .duckdb files can be opened.")
+    try:
+        candidate.relative_to(base)
+    except ValueError as exc:
+        raise ApiError(400, "Database must live inside market_data/.") from exc
+    return candidate
 
 
 def validate_symbol(symbol: str) -> str:
@@ -354,23 +395,53 @@ def validate_date(value: str) -> str:
     return value
 
 
-def q_symbols(con, _params) -> dict:
-    rows = con.execute("SELECT DISTINCT symbol FROM ohlcv_1m ORDER BY symbol").fetchall()
-    return {"symbols": [r[0] for r in rows]}
+def q_databases(_con, _params) -> dict:
+    """Dynamically discover every .duckdb file under market_data/."""
+    base = REPO_ROOT / "market_data"
+    out = []
+    for p in sorted(base.rglob("*.duckdb")) if base.exists() else []:
+        if not p.is_file():
+            continue
+        rel = p.relative_to(REPO_ROOT)
+        folder = p.parent.relative_to(base)
+        out.append({
+            "path": rel.as_posix(),
+            "name": p.name,
+            "folder": folder.as_posix() if str(folder) != "." else "",
+            "size_mb": round(p.stat().st_size / (1024 * 1024), 2),
+        })
+    return {"databases": out}
+
+
+def q_tables(con, _params) -> dict:
+    """Candle-style tables in the selected DB with row/symbol counts."""
+    out = []
+    for t in candle_tables(con):
+        qt = quote_ident(t)
+        try:
+            cols = {str(r[0]).lower() for r in con.execute(f"DESCRIBE {qt}").fetchall()}
+            rows = int(con.execute(f"SELECT COUNT(*) FROM {qt}").fetchone()[0])
+            symbols = int(con.execute(f"SELECT COUNT(DISTINCT symbol) FROM {qt}").fetchone()[0]) if "symbol" in cols else 0
+        except duckdb.Error:
+            continue
+        out.append({"name": t, "rows": rows, "symbols": symbols})
+    return {"tables": out}
+
+
+def q_symbols(con, params) -> dict:
+    table = resolve_table(con, (params.get("table") or [None])[0])
+    rows = con.execute(f"SELECT DISTINCT symbol FROM {quote_ident(table)} ORDER BY symbol").fetchall()
+    return {"symbols": [r[0] for r in rows], "table": table}
 
 
 def q_meta(con, params) -> dict:
-    table = validate_table((params.get("table") or ["ohlcv_1m"])[0])
+    table = resolve_table(con, (params.get("table") or [None])[0])
     try:
         row = con.execute(
-            f"SELECT COUNT(*), COUNT(DISTINCT symbol), MIN(timestamp), MAX(timestamp) FROM {table}"
+            f"SELECT COUNT(*), COUNT(DISTINCT symbol), MIN(timestamp), MAX(timestamp) FROM {quote_ident(table)}"
         ).fetchone()
     except duckdb.CatalogException:
-        raise ApiError(
-            400,
-            f"Table {table} does not exist yet. Build it with: "
-            "python openalgo_ingest.py --action aggregate",
-        )
+        raise ApiError(400, f"Table {table} does not exist yet.")
     return {
         "table": table,
         "rows": int(row[0]),
@@ -382,10 +453,10 @@ def q_meta(con, params) -> dict:
 
 def q_candles(con, params) -> dict:
     symbol = validate_symbol(params.get("symbol", [""])[0])
-    table = validate_table((params.get("table") or ["ohlcv_1m"])[0])
+    table = resolve_table(con, (params.get("table") or [None])[0])
     start = validate_date(params["start"][0]) if params.get("start") else None
     end = validate_date(params["end"][0]) if params.get("end") else None
-    limit = min(int(params.get("limit", [MAX_LIMIT])[0]), MAX_LIMIT)
+    limit = max(1, min(int(params.get("limit", [MAX_LIMIT])[0]), MAX_LIMIT))
 
     where = ["symbol = ?"]
     args: list = [symbol]
@@ -393,20 +464,20 @@ def q_candles(con, params) -> dict:
         where.append(f"timestamp >= {ist_day_bound(start)}")
     if end:
         where.append(f"timestamp < {ist_day_bound(end, end=True)}")
+    cond = " AND ".join(where)
+
+    # Fetch the most recent `limit` candles (descending), then flip to ascending.
     query = (
-        f"SELECT epoch(timestamp), open, high, low, close, volume FROM {table} "
-        f"WHERE {' AND '.join(where)} ORDER BY timestamp ASC LIMIT {limit + 1}"
+        f"SELECT epoch(timestamp), open, high, low, close, volume FROM {quote_ident(table)} "
+        f"WHERE {cond} ORDER BY timestamp DESC LIMIT {limit + 1}"
     )
     try:
         rows = con.execute(query, args).fetchall()
     except duckdb.CatalogException:
-        raise ApiError(
-            400,
-            f"Table {table} does not exist yet. Build it with: "
-            "python openalgo_ingest.py --action aggregate",
-        )
+        raise ApiError(400, f"Table {table} does not exist yet.")
     truncated = len(rows) > limit
-    candles = [[int(r[0]), *map(float, r[1:5]), int(r[5])] for r in rows[:limit]]
+    rows = rows[:limit][::-1]
+    candles = [[int(r[0]), *map(float, r[1:5]), int(r[5] or 0)] for r in rows]
     return {
         "symbol": symbol,
         "table": table,
@@ -418,9 +489,9 @@ def q_candles(con, params) -> dict:
 
 def q_freshness(con, _params) -> dict:
     out = {}
-    for table in TABLES:
+    for table in candle_tables(con):
         try:
-            row = con.execute(f"SELECT COUNT(*), MAX(timestamp) FROM {table}").fetchone()
+            row = con.execute(f"SELECT COUNT(*), MAX(timestamp) FROM {quote_ident(table)}").fetchone()
             out[table] = {
                 "rows": int(row[0]),
                 "max_ts": int(row[1].timestamp()) if row[1] else None,
@@ -431,6 +502,8 @@ def q_freshness(con, _params) -> dict:
 
 
 ROUTES = {
+    "/api/databases": q_databases,
+    "/api/tables": q_tables,
     "/api/symbols": q_symbols,
     "/api/meta": q_meta,
     "/api/candles": q_candles,
@@ -438,6 +511,7 @@ ROUTES = {
     "/api/strategies": q_strategies,
     "/api/system/stats": q_system_stats,
 }
+NO_DB_ROUTES = {"/api/databases", "/api/strategies"}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -501,9 +575,13 @@ class Handler(BaseHTTPRequestHandler):
             if route is None:
                 self._send_json({"error": "Not found"}, 404)
                 return
-            con = db_connect(self.db_path)
+            params = parse_qs(parsed.query)
+            if parsed.path in NO_DB_ROUTES:
+                self._send_json(route(None, params))
+                return
+            con = db_connect(resolve_request_db(params))
             try:
-                self._send_json(route(con, parse_qs(parsed.query)))
+                self._send_json(route(con, params))
             finally:
                 con.close()
         except ApiError as exc:
@@ -522,8 +600,11 @@ def main() -> int:
 
     Handler.db_path = resolve_db_path(args.db)
 
-    with db_connect(Handler.db_path):
-        pass
+    try:
+        with db_connect(Handler.db_path):
+            pass
+    except ApiError as exc:
+        print(f"[viz] warning: default DB unavailable ({exc}); pick a file in the UI")
 
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     server.daemon_threads = True
