@@ -247,7 +247,9 @@ def close_and_archive_position(
     taxes_fees: float,
     net_pnl: float,
     balance_after_trade: Optional[float] = None,
-    mode: str = "paper"
+    mode: str = "paper",
+    direction: Optional[str] = None,
+    **kwargs
 ) -> bool:
     """
     Atomically closes an active position and inserts the completed trade
@@ -278,7 +280,8 @@ def close_and_archive_position(
             new_balance = round(CONFIG.INITIAL_CAPITAL + cum_pnl + float(net_pnl), 2)
 
         # 3. Insert into permanent trade_history
-        dir_clean = str(kwargs.get('direction') or pos_dict.get('direction', 'SHORT')).upper()
+        dir_val = direction or kwargs.get('direction') or pos_dict.get('direction', 'SHORT')
+        dir_clean = str(dir_val).upper()
         cursor.execute("""
             INSERT INTO trade_history 
             (symbol, order_type, entry_time, exit_time, entry_price, exit_price, quantity, result, gross_pnl, taxes_fees, net_pnl, balance_after_trade, created_at, direction)
