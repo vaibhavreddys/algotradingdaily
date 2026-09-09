@@ -181,10 +181,21 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(text, parse_mode="Markdown")
 
 
+async def _reply_markdown_safe(update: Update, text: str) -> None:
+    """Replies using Markdown; falls back to plain text if Markdown parsing fails."""
+    if update.message is None:
+        return
+    try:
+        await update.message.reply_text(text, parse_mode="Markdown")
+    except Exception as e:
+        log.warning("Markdown send failed (%s); falling back to plain text", e)
+        await update.message.reply_text(text)
+
+
 async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not await _require_subscriber(update):
         return
-    await update.message.reply_text(_build_status_text(), parse_mode="Markdown")
+    await _reply_markdown_safe(update, _build_status_text())
 
 
 # --- subscriber-only on-demand portfolio commands -------------------------
@@ -501,10 +512,10 @@ def _probe_engine_process(mode: str, config: Optional[TradingConfig] = None) -> 
         try:
             from core.market_calendar import is_market_open
             if not is_market_open(market_key):
-                return "🟡", f"Stopped ({target} not running, market closed)"
+                return "🟡", f"Stopped (`{target}` not running, market closed)"
         except Exception:
             pass
-        return "🔴", f"Not running (no {target} process found)"
+        return "🔴", f"Not running (no `{target}` process found)"
 
     pid_str = ", ".join(str(p) for p in sorted(pids)[:3])
     suffix = f" (+{len(pids)-3} more)" if len(pids) > 3 else ""
@@ -713,25 +724,25 @@ def _build_summary_text(mode: str = "paper") -> str:
 async def cmd_pnl(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not await _require_subscriber(update):
         return
-    await update.message.reply_text(_build_pnl_text(mode=CONFIG.TRADING_MODE), parse_mode="Markdown")
+    await _reply_markdown_safe(update, _build_pnl_text(mode=CONFIG.TRADING_MODE))
 
 
 async def cmd_positions(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not await _require_subscriber(update):
         return
-    await update.message.reply_text(_build_positions_text(mode=CONFIG.TRADING_MODE), parse_mode="Markdown")
+    await _reply_markdown_safe(update, _build_positions_text(mode=CONFIG.TRADING_MODE))
 
 
 async def cmd_health(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not await _require_subscriber(update):
         return
-    await update.message.reply_text(_build_health_text(), parse_mode="Markdown")
+    await _reply_markdown_safe(update, _build_health_text())
 
 
 async def cmd_summary(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not await _require_subscriber(update):
         return
-    await update.message.reply_text(_build_summary_text(mode=CONFIG.TRADING_MODE), parse_mode="Markdown")
+    await _reply_markdown_safe(update, _build_summary_text(mode=CONFIG.TRADING_MODE))
 
 
 # --- owner-only admin handlers ---------------------------------------------
