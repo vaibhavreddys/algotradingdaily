@@ -13,7 +13,9 @@ Provides the universal execution daemon, risk guardian, and scheduler:
 import os
 import sys
 import time
+import json
 import datetime
+from pathlib import Path
 from typing import Dict, Any, Optional, List, Tuple
 from concurrent.futures import ThreadPoolExecutor
 import pandas as pd
@@ -625,6 +627,23 @@ class BaseTradingEngine:
         # Always dispatch EOD summary scorecard to Telegram (even on 0-trade discipline days)
         notify_eod_summary(report_text=eod_msg, mode=self.mode, config=self.config)
 
+    def update_heartbeat(self, state: str = "scanning") -> None:
+        """Writes a lightweight heartbeat JSON file for Telegram bot and health monitoring probes."""
+        try:
+            logs_dir = getattr(self.config, "LOGS_DIR", "logs")
+            hb_path = Path(logs_dir) / f"engine_heartbeat_{self.mode}.json"
+            hb_path.parent.mkdir(parents=True, exist_ok=True)
+            payload = {
+                "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "mode": self.mode,
+                "state": state,
+                "active_positions": len(self.active_positions),
+                "pid": os.getpid(),
+            }
+            hb_path.write_text(json.dumps(payload), encoding="utf-8")
+        except Exception:
+            pass
+
     def run(self) -> None:
         """Alias for run_live_loop() to provide standard execution interface."""
         self.run_live_loop()
@@ -638,6 +657,7 @@ class BaseTradingEngine:
 
         self.authenticate()
         self.sync_active_positions_from_db(mode=self.mode)
+        self.update_heartbeat("running")
 
         print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] 🚀 Live {self.mode.upper()} Engine started.")
 
@@ -652,9 +672,11 @@ class BaseTradingEngine:
                     if self.active_positions:
                         self.squareoff_all_positions()
                     self.generate_eod_report()
+                    self.update_heartbeat("closed")
                     break
 
                 if not self.is_market_open(now):
+                    self.update_heartbeat("pre_market")
                     wait_sec = self.get_seconds_until_market_open(now)
                     target_time = (now + datetime.timedelta(seconds=wait_sec)).strftime('%H:%M:%S')
                     print(f"[{now.strftime('%H:%M:%S')}] ⏳ Pre-market: Sleeping {wait_sec}s until market open at {target_time} IST...")
@@ -662,6 +684,7 @@ class BaseTradingEngine:
                     continue
 
                 if not self.is_entry_window_active(now) and not self.active_positions and now.time() < datetime.time(10, 0):
+                    self.update_heartbeat("pre_entry")
                     wait_sec = self.get_seconds_until_entry_window(now)
                     target_time = (now + datetime.timedelta(seconds=wait_sec)).strftime('%H:%M:%S')
                     print(f"[{now.strftime('%H:%M:%S')}] ⏳ Pre-entry: 0 active positions. Sleeping {wait_sec}s until entry window opens at {target_time} IST...")
@@ -672,6 +695,7 @@ class BaseTradingEngine:
                     if self.active_positions:
                         self.squareoff_all_positions()
                     self.generate_eod_report()
+                    self.update_heartbeat("closed")
                     print(f"[{now.strftime('%H:%M:%S')}] ✅ Trading session completed for today.")
                     break
 
@@ -680,6 +704,7 @@ class BaseTradingEngine:
                         nifty_pct_map = self.get_benchmark_feed()
                         self.scan_and_execute_signals(nifty_pct_map)
 
+                self.update_heartbeat("scanning")
                 wait_sec = self.get_seconds_until_next_candle(interval_mins=15, now=now)
                 next_check = (now + datetime.timedelta(seconds=wait_sec)).strftime('%H:%M:%S')
                 print(f"[{now.strftime('%H:%M:%S')}] ⏳ Next 15m scan in {wait_sec}s ({next_check}). Active slots: {len(self.active_positions)}/{self.config.MAX_CONCURRENT_POSITIONS}")
@@ -703,6 +728,9 @@ class BaseTradingEngine:
 
                     if self.active_positions:
                         self.monitor_active_positions()
+                        self.update_heartbeat("monitoring")
+                    else:
+                        self.update_heartbeat("waiting")
 
                     if self.is_squareoff_time(datetime.datetime.now()):
                         break
@@ -710,6 +738,7 @@ class BaseTradingEngine:
         except KeyboardInterrupt:
             print(f"[INTERRUPT] User interrupted {self.mode.upper()} engine (Ctrl+C). Generating report...")
             self.generate_eod_report()
+            self.update_heartbeat("closed")
 
     # --- Abstract Hooks to be implemented by child classes ---
     def execute_entry(self, symbol: str, entry_price: float, sl_price: float, tp_price: float) -> bool:

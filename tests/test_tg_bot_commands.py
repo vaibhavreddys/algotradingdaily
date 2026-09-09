@@ -10,6 +10,7 @@ are patched in the bot module so the tests run hermetically.
 
 import os
 import sys
+import json
 import asyncio
 import datetime
 import tempfile
@@ -218,10 +219,42 @@ class TestOnDemandCommands(unittest.TestCase):
 
     def test_probe_engine_heartbeat_db_error(self):
         with patch("core.market_calendar.is_market_open", return_value=True), \
+             patch("pathlib.Path.exists", return_value=False), \
              patch("core.trade_db.get_trade_journal", side_effect=RuntimeError("db gone")):
             icon, text = self.tg_bot._probe_engine_heartbeat("paper")
         self.assertEqual(icon, "🔴")
         self.assertIn("Unreachable", text)
+
+    def test_probe_engine_heartbeat_via_heartbeat_file_active(self):
+        now = datetime.datetime.now()
+        hb_data = json.dumps({
+            "timestamp": now.strftime("%Y-%m-%d %H:%M:%S"),
+            "mode": "paper",
+            "state": "scanning",
+            "active_positions": 0
+        })
+        with patch("core.market_calendar.is_market_open", return_value=True), \
+             patch("pathlib.Path.exists", return_value=True), \
+             patch("pathlib.Path.read_text", return_value=hb_data):
+            icon, text = self.tg_bot._probe_engine_heartbeat("paper")
+        self.assertEqual(icon, "🟢")
+        self.assertIn("Active", text)
+        self.assertIn("0 in-flight", text)
+
+    def test_probe_engine_heartbeat_via_heartbeat_file_closed_post_market(self):
+        now = datetime.datetime.now()
+        hb_data = json.dumps({
+            "timestamp": now.strftime("%Y-%m-%d %H:%M:%S"),
+            "mode": "paper",
+            "state": "closed",
+            "active_positions": 0
+        })
+        with patch("core.market_calendar.is_market_open", return_value=False), \
+             patch("pathlib.Path.exists", return_value=True), \
+             patch("pathlib.Path.read_text", return_value=hb_data):
+            icon, text = self.tg_bot._probe_engine_heartbeat("paper")
+        self.assertEqual(icon, "🟢")
+        self.assertIn("Sleeping (Session ended cleanly)", text)
 
     def test_probe_market_status_open(self):
         with patch("core.market_calendar.is_market_open", return_value=True):

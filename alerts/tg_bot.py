@@ -322,14 +322,47 @@ def _probe_engine_heartbeat(mode: str, stale_minutes: int = 30, config: Optional
     """
     Returns (icon, status_text) for the trading engine liveness signal.
     When market is closed and day completed cleanly, marks as 'Sleeping (Session Ended)'.
+    During market hours, checks live heartbeat file first, then trade DB.
     """
+    cfg = config or CONFIG
     try:
-        market_key = getattr(config or CONFIG, "EXCHANGE_MARKET", "NSE")
+        market_key = getattr(cfg, "EXCHANGE_MARKET", "NSE")
         from core.market_calendar import is_market_open
         market_is_open = is_market_open(market_key)
     except Exception:
         market_is_open = True
 
+    # 1. Check direct engine heartbeat file if available
+    try:
+        import json
+        from pathlib import Path
+        logs_dir = getattr(cfg, "LOGS_DIR", "logs")
+        hb_path = Path(logs_dir) / f"engine_heartbeat_{mode}.json"
+        if hb_path.exists():
+            data = json.loads(hb_path.read_text(encoding="utf-8"))
+            hb_str = data.get("timestamp", "")
+            if hb_str:
+                hb_dt = datetime.datetime.strptime(hb_str, "%Y-%m-%d %H:%M:%S")
+                hb_age_min = (datetime.datetime.now() - hb_dt).total_seconds() / 60.0
+                state = data.get("state", "running")
+                active_count = data.get("active_positions", 0)
+
+                if state == "closed" and not market_is_open:
+                    return "🟢", "Sleeping (Session ended cleanly)"
+
+                if hb_age_min <= stale_minutes:
+                    pos_txt = f"{active_count} open" if active_count > 0 else "0 in-flight"
+                    if not market_is_open:
+                        return "🟢", f"Sleeping (Session ended, last beat {hb_age_min:.0f}m ago)"
+                    return "🟢", f"Active ({state.title()}, {pos_txt})"
+                elif not market_is_open:
+                    return "🟢", f"Sleeping (Session ended, last beat {hb_age_min:.0f}m ago)"
+                else:
+                    return "🟠", f"Stalled (Last beat {hb_age_min:.0f}m ago)"
+    except Exception:
+        pass
+
+    # 2. Probe trade journal as fallback
     try:
         from core.trade_db import get_trade_journal
         recent = get_trade_journal(mode=mode, limit=1)
