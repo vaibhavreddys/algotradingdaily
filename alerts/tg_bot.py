@@ -67,28 +67,28 @@ WELCOME_BACK = "Welcome back! Send your invite code to reactivate your subscript
 HELP_USER = (
     "🤖 *AlgoTradingDaily Bot*\n\n"
     "User commands:\n"
-    "• /start — begin the invite-code flow\n"
-    "• /stop  — unsubscribe from alerts\n"
+    "• /status — engine heartbeat, market status, and next scan time\n"
     "• /pnl — today's realized + open MTM P&L scorecard\n"
     "• /positions — currently open trades with trailing status\n"
-    "• /status — engine heartbeat, market status, and next scan time\n"
-    "• /health — infrastructure health: OpenAlgo gateway, broker auth, engine process\n"
     "• /summary — strategy lifetime journal (wins, profit factor, ROI)\n"
-    "• /help  — show this message"
+    "• /health — infrastructure health: OpenAlgo gateway, broker auth, engine process\n"
+    "• /help  — show this message\n"
+    "• /start — begin the invite-code flow\n"
+    "• /stop  — unsubscribe from alerts"
 )
 
 # Commands registered with Telegram via set_my_commands() at startup so that
 # typing "/" in the chat surfaces them as inline suggestions. Description
 # strings must be 3-256 chars per Bot API.
 BOT_COMMAND_LIST: List[BotCommand] = [
-    BotCommand("start", "Begin the invite-code subscription flow"),
-    BotCommand("stop", "Unsubscribe from alerts"),
+    BotCommand("status", "Engine heartbeat, market status, next 15m scan"),
     BotCommand("pnl", "Today's realized + open MTM P&L scorecard"),
     BotCommand("positions", "Currently open trades with trailing SL status"),
-    BotCommand("status", "Engine heartbeat, market status, next 15m scan"),
-    BotCommand("health", "Infra health: OpenAlgo, broker auth, engine process"),
     BotCommand("summary", "Strategy lifetime journal: wins, profit factor, ROI"),
+    BotCommand("health", "Infra health: OpenAlgo, broker auth, engine process"),
     BotCommand("help", "Show this help message"),
+    BotCommand("start", "Begin the invite-code subscription flow"),
+    BotCommand("stop", "Unsubscribe from alerts"),
 ]
 HELP_OWNER = (
     "\n\nOwner commands (only in the owner's chat):\n"
