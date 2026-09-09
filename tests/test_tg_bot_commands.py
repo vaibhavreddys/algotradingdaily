@@ -238,6 +238,171 @@ class TestOnDemandCommands(unittest.TestCase):
 
     # --- set_my_commands for slash suggestions --------------------------
 
+    # --- /health builder ---------------------------------------------------
+
+    def test_health_text_all_green(self):
+        with patch.object(self.tg_bot, "_probe_openalgo_gateway", return_value=("🟢", "Running on http://127.0.0.1:5000 (HTTP 200, service active)")), \
+             patch.object(self.tg_bot, "_probe_broker_auth", return_value=("🟢", "Shoonya: Authenticated")), \
+             patch.object(self.tg_bot, "_probe_engine_process", return_value=("🟢", "Running (pid 123)")):
+            text = self.tg_bot._build_health_text()
+        self.assertIn("INFRASTRUCTURE HEALTH", text)
+        self.assertIn("Overall: 🟢 All systems operational", text)
+        self.assertIn("OpenAlgo Gateway: 🟢", text)
+        self.assertIn("Broker Auth: 🟢", text)
+        self.assertIn("Paper Engine Process: 🟢", text)
+
+    def test_health_text_reports_down_component(self):
+        with patch.object(self.tg_bot, "_probe_openalgo_gateway", return_value=("🔴", "Unreachable on http://127.0.0.1:5000 (ConnectionError)")), \
+             patch.object(self.tg_bot, "_probe_broker_auth", return_value=("🟢", "Shoonya: Authenticated")), \
+             patch.object(self.tg_bot, "_probe_engine_process", return_value=("🟢", "Running (pid 123)")):
+            text = self.tg_bot._build_health_text()
+        self.assertIn("Overall: 🔴 Degraded", text)
+        self.assertIn("OpenAlgo Gateway: 🔴", text)
+
+    def test_health_text_partial_when_engine_stopped_or_unknown(self):
+        # Engine not running while market closed → 🟡 → overall partial.
+        with patch.object(self.tg_bot, "_probe_openalgo_gateway", return_value=("🟢", "Running on http://127.0.0.1:5000 (HTTP 200)")), \
+             patch.object(self.tg_bot, "_probe_broker_auth", return_value=("🟢", "Shoonya: Authenticated")), \
+             patch.object(self.tg_bot, "_probe_engine_process", return_value=("🟡", "Stopped (paper_trader.py not running, market closed)")):
+            text = self.tg_bot._build_health_text()
+        self.assertIn("Overall: 🟡 Partial", text)
+        self.assertIn("Paper Engine Process: 🟡", text)
+
+    def test_health_text_probe_crash_degrades_single_line(self):
+        # A raising probe must be caught and rendered as its own ⚪ line,
+        # never crash the whole report.
+        with patch.object(self.tg_bot, "_probe_openalgo_gateway", side_effect=RuntimeError("boom")), \
+             patch.object(self.tg_bot, "_probe_broker_auth", return_value=("🟢", "Shoonya: Authenticated")), \
+             patch.object(self.tg_bot, "_probe_engine_process", return_value=("🟢", "Running (pid 123)")):
+            text = self.tg_bot._build_health_text()
+        self.assertIn("OpenAlgo Gateway: ⚪ Probe failed (RuntimeError: boom)", text)
+        self.assertIn("Overall: 🟡 Partial", text)
+
+    # --- /health probes ---------------------------------------------------
+
+    def test_probe_openalgo_gateway_http_ok(self):
+        with patch("subprocess.run") as mock_run, patch("requests.get") as mock_get:
+            mock_run.return_value.stdout = "active\n"
+            mock_get.return_value.status_code = 200
+            icon, text = self.tg_bot._probe_openalgo_gateway(self.tg_bot.CONFIG)
+        self.assertEqual(icon, "🟢")
+        self.assertIn("HTTP 200", text)
+        self.assertIn("service active", text)
+
+    def test_probe_openalgo_gateway_falls_back_to_funds_validation(self):
+        # Builds where /api/v1/ping is absent (404) must still detect a live
+        # gateway via the funds endpoint's structured validation response.
+        with patch("requests.get") as mock_get, patch("requests.post") as mock_post:
+            mock_get.return_value.status_code = 404
+            mock_post.return_value.status_code = 400
+            icon, text = self.tg_bot._probe_openalgo_gateway(self.tg_bot.CONFIG)
+        self.assertEqual(icon, "🟢")
+        self.assertIn("API responding, HTTP 400", text)
+
+    def test_probe_openalgo_gateway_http_error(self):
+        with patch("requests.get") as mock_get, patch("requests.post") as mock_post:
+            mock_get.return_value.status_code = 502
+            mock_post.return_value.status_code = 502
+            icon, text = self.tg_bot._probe_openalgo_gateway(self.tg_bot.CONFIG)
+        self.assertEqual(icon, "🔴")
+        self.assertIn("HTTP 502", text)
+
+    def test_probe_openalgo_gateway_connection_refused(self):
+        import requests as real_requests
+        with patch("requests.get", side_effect=real_requests.ConnectionError("refused")), \
+             patch("requests.post", side_effect=real_requests.ConnectionError("refused")):
+            icon, text = self.tg_bot._probe_openalgo_gateway(self.tg_bot.CONFIG)
+        self.assertEqual(icon, "🔴")
+        self.assertIn("Unreachable", text)
+
+    def test_probe_broker_auth_success(self):
+        with patch("openalgo.api") as mock_api:
+            # patch("openalgo.api") replaces the class itself; instances come
+            # from mock_api.return_value.
+            mock_api.return_value.funds.return_value = {
+                "status": "success", "data": {"availablecash": "10000"},
+            }
+            icon, text = self.tg_bot._probe_broker_auth(self.tg_bot.CONFIG)
+        self.assertEqual(icon, "🟢")
+        self.assertIn("Authenticated", text)
+
+    def test_probe_broker_auth_session_expired_empty_payload(self):
+        with patch("openalgo.api") as mock_api:
+            mock_api.return_value.funds.return_value = {"status": "success", "data": {}}
+            icon, text = self.tg_bot._probe_broker_auth(self.tg_bot.CONFIG)
+        self.assertEqual(icon, "🔴")
+        self.assertIn("Session expired", text)
+
+    def test_probe_broker_auth_error_status(self):
+        with patch("openalgo.api") as mock_api:
+            mock_api.return_value.funds.return_value = {
+                "status": "error", "message": "Invalid API key",
+            }
+            icon, text = self.tg_bot._probe_broker_auth(self.tg_bot.CONFIG)
+        self.assertEqual(icon, "🔴")
+        self.assertIn("Auth failed", text)
+        self.assertIn("Invalid API key", text)
+
+    def test_probe_broker_auth_no_api_key(self):
+        from config import TradingConfig
+        cfg = TradingConfig(OPENALGO_API_KEY="")
+        icon, text = self.tg_bot._probe_broker_auth(cfg)
+        self.assertEqual(icon, "🟡")
+        self.assertIn("API key not configured", text)
+
+    def test_probe_engine_process_finds_pid(self):
+        with patch.object(self.tg_bot.os, "listdir", return_value=["42", "self"]), \
+             patch("builtins.open", create=True) as mock_open:
+            mock_open.return_value.__enter__.return_value.read.return_value = (
+                b"python -u live_trading/paper_trader.py"
+            )
+            icon, text = self.tg_bot._probe_engine_process("paper")
+        self.assertEqual(icon, "🟢")
+        self.assertIn("Running (pid 42)", text)
+
+    def test_probe_engine_process_market_closed_reports_stopped(self):
+        with patch.object(self.tg_bot.os, "listdir", return_value=[]), \
+             patch("core.market_calendar.is_market_open", return_value=False):
+            icon, text = self.tg_bot._probe_engine_process("paper")
+        self.assertEqual(icon, "🟡")
+        self.assertIn("Stopped", text)
+        self.assertIn("market closed", text)
+
+    def test_probe_engine_process_not_found_during_market_hours(self):
+        with patch.object(self.tg_bot.os, "listdir", return_value=[]), \
+             patch("core.market_calendar.is_market_open", return_value=True):
+            icon, text = self.tg_bot._probe_engine_process("paper")
+        self.assertEqual(icon, "🔴")
+        self.assertIn("Not running", text)
+
+    def test_probe_engine_process_live_mode_targets_live_trader(self):
+        with patch.object(self.tg_bot.os, "listdir", return_value=[]), \
+             patch("core.market_calendar.is_market_open", return_value=True):
+            icon, text = self.tg_bot._probe_engine_process("live")
+        self.assertIn("live_trader.py", text)
+
+    # --- /health access control + registration ----------------------------
+
+    def test_active_subscriber_sees_health(self):
+        update = _make_update(chat_id=111)
+        with patch.object(self.tg_bot, "_build_health_text", return_value="🏥 HEALTH"):
+            _run(self.tg_bot.cmd_health(update, MagicMock()))
+        update.message.reply_text.assert_awaited_once_with(
+            "🏥 HEALTH", parse_mode="Markdown"
+        )
+
+    def test_health_requires_subscription(self):
+        update = _make_update(chat_id=999999)  # not subscribed
+        with patch.object(self.tg_bot, "_build_health_text", return_value="(should not see this)"):
+            _run(self.tg_bot.cmd_health(update, MagicMock()))
+        update.message.reply_text.assert_awaited_once()
+        reply = update.message.reply_text.await_args.args[0]
+        self.assertIn("🔒", reply)
+
+    def test_health_in_bot_command_list_and_handlers(self):
+        commands = {c.command for c in self.tg_bot.BOT_COMMAND_LIST}
+        self.assertIn("health", commands)
+
     def test_bot_command_list_includes_all_public_commands(self):
         commands = {c.command for c in self.tg_bot.BOT_COMMAND_LIST}
         # All user-facing commands must be in the suggestion list.

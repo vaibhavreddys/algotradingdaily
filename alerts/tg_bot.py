@@ -72,6 +72,7 @@ HELP_USER = (
     "• /pnl — today's realized + open MTM P&L scorecard\n"
     "• /positions — currently open trades with trailing status\n"
     "• /status — engine heartbeat, market status, and next scan time\n"
+    "• /health — infrastructure health: OpenAlgo gateway, broker auth, engine process\n"
     "• /summary — strategy lifetime journal (wins, profit factor, ROI)\n"
     "• /help  — show this message"
 )
@@ -85,6 +86,7 @@ BOT_COMMAND_LIST: List[BotCommand] = [
     BotCommand("pnl", "Today's realized + open MTM P&L scorecard"),
     BotCommand("positions", "Currently open trades with trailing SL status"),
     BotCommand("status", "Engine heartbeat, market status, next 15m scan"),
+    BotCommand("health", "Infra health: OpenAlgo, broker auth, engine process"),
     BotCommand("summary", "Strategy lifetime journal: wins, profit factor, ROI"),
     BotCommand("help", "Show this help message"),
 ]
@@ -378,6 +380,134 @@ def _probe_broker_connection(config: TradingConfig) -> str:
         return f"(⚪ Broker: {broker_name} Offline)"
 
 
+def _probe_openalgo_gateway(config: TradingConfig) -> Tuple[str, str]:
+    """
+    Returns (icon, status_text) for the OpenAlgo gateway service. Liveness is
+    proven by any structured HTTP response from the gateway's API: first the
+    canonical GET /api/v1/ping, then — on OpenAlgo builds where that route is
+    absent (404) — an empty POST to the read-only /api/v1/funds, whose
+    400/401/403 validation response still proves the Flask app is serving.
+    The local systemd unit state (when available) is folded in as corroborating
+    detail, since the configured host may be remote rather than this machine.
+    """
+    host = getattr(config, "OPENALGO_HOST", "http://127.0.0.1:5000").rstrip("/")
+    unit_state = ""
+    try:
+        import subprocess
+        res = subprocess.run(
+            ["systemctl", "is-active", "openalgo"],
+            capture_output=True, text=True, timeout=5,
+        )
+        state = (res.stdout or "").strip().lower()
+        if state in ("active", "inactive", "failed"):
+            unit_state = state
+    except Exception:
+        pass
+
+    def _detail() -> str:
+        if unit_state == "active":
+            return ", service active"
+        if unit_state in ("inactive", "failed"):
+            return f", local unit {unit_state}"
+        return ""
+
+    last_status: Optional[int] = None
+    last_exc: Optional[str] = None
+
+    try:
+        import requests
+        res = requests.get(f"{host}/api/v1/ping", timeout=4)
+        if res.status_code == 200:
+            return "🟢", f"Running on {host} (HTTP 200{_detail()})"
+        last_status = res.status_code
+    except Exception as e:
+        last_exc = type(e).__name__
+
+    try:
+        import requests
+        res = requests.post(f"{host}/api/v1/funds", json={}, timeout=4)
+        if res.status_code in (200, 400, 401, 403):
+            return "🟢", f"Running on {host} (API responding, HTTP {res.status_code}{_detail()})"
+        last_status = res.status_code
+    except Exception as e:
+        last_exc = type(e).__name__
+
+    if last_status is not None:
+        return "🔴", f"Responded HTTP {last_status} on {host}{_detail()}"
+    return "🔴", f"Unreachable on {host} ({last_exc}{_detail()})"
+
+
+def _probe_engine_process(mode: str, config: Optional[TradingConfig] = None) -> Tuple[str, str]:
+    """
+    Returns (icon, status_text) for the trading engine process launched by
+    scripts/run_daily_algo.sh (paper_trader.py / live_trader.py). Detects the
+    process by scanning /proc cmdlines so it works regardless of whether the
+    engine runs under cron, nohup, or tmux.
+    """
+    target = "live_trader.py" if str(mode).lower() == "live" else "paper_trader.py"
+    try:
+        pids: List[int] = []
+        for entry in os.listdir("/proc"):
+            if not entry.isdigit():
+                continue
+            try:
+                with open(f"/proc/{entry}/cmdline", "rb") as f:
+                    cmdline = f.read().decode("utf-8", errors="replace")
+            except (OSError, PermissionError):
+                continue
+            if target in cmdline and "tg_bot" not in cmdline:
+                pids.append(int(entry))
+    except Exception as e:
+        return "⚪", f"Process scan failed ({type(e).__name__})"
+
+    if not pids:
+        # On weekdays the engine should be running during market hours and up
+        # to the square-off; outside those windows absence is expected, not an error.
+        cfg = config or CONFIG
+        market_key = getattr(cfg, "EXCHANGE_MARKET", "NSE")
+        try:
+            from core.market_calendar import is_market_open
+            if not is_market_open(market_key):
+                return "🟡", f"Stopped ({target} not running, market closed)"
+        except Exception:
+            pass
+        return "🔴", f"Not running (no {target} process found)"
+
+    pid_str = ", ".join(str(p) for p in sorted(pids)[:3])
+    suffix = f" (+{len(pids)-3} more)" if len(pids) > 3 else ""
+    return "🟢", f"Running (pid {pid_str}{suffix})"
+
+
+def _probe_broker_auth(config: TradingConfig) -> Tuple[str, str]:
+    """
+    Returns (icon, status_text) for the broker session behind OpenAlgo. Uses
+    the funds() round-trip as the session-validity check, mirroring
+    scripts/verify_gateway.py: a non-success status or empty payload means the
+    broker login has expired and must be redone in the OpenAlgo UI.
+    """
+    broker_name = (getattr(config, "ACTIVE_BROKER", "shoonya") or "Shoonya").title()
+    host = getattr(config, "OPENALGO_HOST", "http://127.0.0.1:5000")
+    api_key = getattr(config, "OPENALGO_API_KEY", "")
+    if not api_key:
+        return "🟡", f"{broker_name}: API key not configured (standalone mode)"
+    try:
+        from openalgo import api as OpenAlgoClient
+        # Short timeout so a hung gateway degrades this line instead of
+        # stalling the whole /health reply.
+        client = OpenAlgoClient(api_key=api_key, host=host, timeout=8)
+        funds = client.funds()
+        if not isinstance(funds, dict) or funds.get("status") != "success":
+            reason = funds.get("message") if isinstance(funds, dict) else None
+            detail = f": {reason}" if reason else ""
+            return "🔴", f"{broker_name}: Auth failed / session expired{detail}"
+        data = funds.get("data", {})
+        if not data or not isinstance(data, dict) or ("availablecash" not in data and "cash" not in data and "net" not in data):
+            return "🔴", f"{broker_name}: Session expired (empty funds payload — login required)"
+        return "🟢", f"{broker_name}: Authenticated"
+    except Exception as e:
+        return "⚪", f"{broker_name}: Probe failed ({type(e).__name__})"
+
+
 def _probe_market_status(config: TradingConfig) -> Tuple[str, str]:
     """Returns (icon, status_text) for whether the configured market is currently open."""
     market_key = getattr(config, "EXCHANGE_MARKET", "NSE")
@@ -463,6 +593,51 @@ def _build_status_text(config: TradingConfig = CONFIG) -> str:
     )
 
 
+def _build_health_text(config: TradingConfig = CONFIG) -> str:
+    """
+    Infrastructure health report: OpenAlgo gateway, broker authentication, and
+    the trading engine process launched by scripts/run_daily_algo.sh. Each probe
+    is guarded so one broken component degrades its own line, never the report.
+    """
+    mode = getattr(config, "TRADING_MODE", "paper")
+
+    try:
+        gw_icon, gw_text = _probe_openalgo_gateway(config)
+    except Exception as e:
+        gw_icon, gw_text = "⚪", f"Probe failed ({type(e).__name__}: {e})"
+
+    try:
+        auth_icon, auth_text = _probe_broker_auth(config)
+    except Exception as e:
+        auth_icon, auth_text = "⚪", f"Probe failed ({type(e).__name__}: {e})"
+
+    try:
+        engine_icon, engine_text = _probe_engine_process(mode, config=config)
+    except Exception as e:
+        engine_icon, engine_text = "⚪", f"Probe failed ({type(e).__name__}: {e})"
+
+    probes = [
+        ("OpenAlgo Gateway", gw_icon, gw_text),
+        ("Broker Auth", auth_icon, auth_text),
+        (f"{mode.title()} Engine Process", engine_icon, engine_text),
+    ]
+    icons = {icon for _, icon, _ in probes}
+    if "🔴" in icons:
+        overall_icon, overall_text = "🔴", "Degraded — one or more components DOWN"
+    elif "⚪" in icons or "🟡" in icons:
+        overall_icon, overall_text = "🟡", "Partial — some components not fully verified"
+    else:
+        overall_icon, overall_text = "🟢", "All systems operational"
+
+    lines = [
+        f"🏥 *[INFRASTRUCTURE HEALTH]* `{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}`",
+        f"• Overall: {overall_icon} {overall_text}",
+    ]
+    for name, icon, text in probes:
+        lines.append(f"• {name}: {icon} {text}")
+    return "\n".join(lines)
+
+
 def _build_summary_text(mode: str = "paper") -> str:
     """Strategy lifetime journal: wins, losses, win rate, profit factor, net PnL."""
     try:
@@ -512,6 +687,12 @@ async def cmd_positions(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     if not await _require_subscriber(update):
         return
     await update.message.reply_text(_build_positions_text(mode=CONFIG.TRADING_MODE), parse_mode="Markdown")
+
+
+async def cmd_health(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not await _require_subscriber(update):
+        return
+    await update.message.reply_text(_build_health_text(), parse_mode="Markdown")
 
 
 async def cmd_summary(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -683,6 +864,7 @@ def main() -> int:
     app.add_handler(CommandHandler("stop", cmd_stop))
     app.add_handler(CommandHandler("help", cmd_help))
     app.add_handler(CommandHandler("status", cmd_status))
+    app.add_handler(CommandHandler("health", cmd_health))
     app.add_handler(CommandHandler("pnl", cmd_pnl))
     app.add_handler(CommandHandler("positions", cmd_positions))
     app.add_handler(CommandHandler("summary", cmd_summary))

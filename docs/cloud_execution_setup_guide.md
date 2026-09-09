@@ -76,7 +76,7 @@ The Telegram bot is user-agnostic — anyone with the **invite code** can subscr
 2. The bot replies: *"To start receiving live trade alerts, send me your invite code now."*
 3. Send the invite code in your next message. On match, you get a welcome message and start receiving alerts immediately.
 4. A wrong code lets you try again; a second wrong code **bans** the chat. (Owner can unban via `/reinstate <chat_id>`.)
-5. Available commands: `/start`, `/stop`, `/status`, `/help`.
+5. Available commands: `/start`, `/stop`, `/status`, `/health`, `/help`. `/health` reports the OpenAlgo gateway, broker authentication, and the trading engine process (the one launched by `scripts/run_daily_algo.sh`).
 
 ### Owner flow (admin commands, only in your own chat)
 Set `TELEGRAM_OWNER_CHAT_ID` to your numeric chat_id and these become available in your chat with the bot:
