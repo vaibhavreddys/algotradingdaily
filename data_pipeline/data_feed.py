@@ -13,6 +13,7 @@ import sys
 import requests
 # pyrefly: ignore [missing-import]
 import yfinance as yf
+import datetime
 import pandas as pd
 from typing import List, Optional, Dict, Any, Tuple
 
@@ -306,9 +307,16 @@ def fetch_nifty_benchmark(
                     res_df['timestamp'] = reader._normalize_timestamp(res_df['timestamp'])
                     res_df = res_df.set_index('timestamp')
                     series = res_df['avg_pct']
-                    _BENCHMARK_CACHE[cache_key] = series
-                    print(f"      ✓ Loaded Synthetic 200-Stock Composite ({len(series)} bars across full historical span)")
-                    return series
+                    # If live session is active today, check if DuckDB has today's live bars
+                    now = pd.Timestamp.now(tz='Asia/Kolkata')
+                    last_date = series.index[-1].date()
+                    if now.weekday() < 5 and now.time() >= datetime.time(9, 15) and last_date < now.date():
+                        # DuckDB is behind today's active session; fall through to live benchmark feed
+                        pass
+                    else:
+                        _BENCHMARK_CACHE[cache_key] = series
+                        print(f"      ✓ Loaded Synthetic 200-Stock Composite ({len(series)} bars across full historical span)")
+                        return series
         except Exception as e:
             print(f"      ⚠️ DuckDB Synthetic Composite query failed: {e}")
 
@@ -319,14 +327,20 @@ def fetch_nifty_benchmark(
             table_name = f"ohlcv_{interval}"
             raw_df = reader.get_full_dataframe(symbol="NIFTY50", table=table_name)
             if raw_df is not None and not raw_df.empty and len(raw_df) >= 50:
-                raw_df = raw_df.copy()
-                raw_df['Date'] = raw_df.index.date
-                daily_opens = raw_df.groupby('Date')['Open'].transform('first')
-                raw_df['Nifty_Pct'] = (raw_df['Close'] - daily_opens) / daily_opens
-                series = raw_df['Nifty_Pct']
-                _BENCHMARK_CACHE[cache_key] = series
-                print(f"      ✓ Loaded NIFTY50 Benchmark from DuckDB ({len(series)} bars)")
-                return series
+                now = pd.Timestamp.now(tz='Asia/Kolkata')
+                last_date = raw_df.index[-1].date()
+                if now.weekday() < 5 and now.time() >= datetime.time(9, 15) and last_date < now.date():
+                    # DuckDB is behind today's active session; fall through to live benchmark feed
+                    pass
+                else:
+                    raw_df = raw_df.copy()
+                    raw_df['Date'] = raw_df.index.date
+                    daily_opens = raw_df.groupby('Date')['Open'].transform('first')
+                    raw_df['Nifty_Pct'] = (raw_df['Close'] - daily_opens) / daily_opens
+                    series = raw_df['Nifty_Pct']
+                    _BENCHMARK_CACHE[cache_key] = series
+                    print(f"      ✓ Loaded NIFTY50 Benchmark from DuckDB ({len(series)} bars)")
+                    return series
         except Exception:
             pass
 
