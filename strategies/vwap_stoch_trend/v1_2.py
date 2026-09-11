@@ -150,6 +150,8 @@ class VWAPStochTrendStrategyV12(BaseStrategy):
         # 7. VWAP Positioning
         df['VWAP_Short_Pass'] = df['Close'] < df['VWAP']
         df['VWAP_Long_Pass'] = df['Close'] > df['VWAP']
+        df['VWAP_Pass'] = df['VWAP_Short_Pass'] | df['VWAP_Long_Pass']
+        df['Stoch_Pass'] = df['Stoch_Short_Pass'] | df['Stoch_Long_Pass']
 
         # 8. Directional Signal Triggers
         df['Short_Signal'] = (

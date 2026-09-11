@@ -535,7 +535,8 @@ async function runBacktest() {
       (d.trades || []).slice(-50).reverse().forEach(t => {
         const tr = document.createElement('tr');
         const isWin = (t.net_pnl || 0) > 0;
-        tr.innerHTML = `<td><b>${t.symbol}</b></td><td>${(t.entry_time || '').slice(0,16)}</td><td>${(t.exit_time || '').slice(0,16)}</td><td style="text-align:center;"><span class="badge-res ${isWin?'badge-win':'badge-loss'}">${t.result}</span></td><td style="text-align:right;color:${(t.pnl_pct||0)>=0?'var(--up)':'var(--down)'};">${(t.pnl_pct||0)>0?'+':''}${t.pnl_pct}%</td><td style="text-align:right;">₹${safeFmt(t.gross_pnl)}</td><td style="text-align:right;color:${isWin?'var(--up)':'var(--down)'};font-weight:700;">${isWin?'+':''}₹${safeFmt(t.net_pnl)}</td><td style="text-align:right;">₹${safeFmt(t.ending_capital)}</td>`;
+        const confText = (t.confidence_score !== null && t.confidence_score !== undefined) ? `${t.confidence_score}` : '-';
+        tr.innerHTML = `<td><b>${t.symbol}</b></td><td style="text-align:center;"><span style="background:rgba(255,255,255,0.06);padding:2px 8px;border-radius:4px;font-size:12px;font-weight:600;">${confText}</span></td><td>${(t.entry_time || '').slice(0,16)}</td><td>${(t.exit_time || '').slice(0,16)}</td><td style="text-align:center;"><span class="badge-res ${isWin?'badge-win':'badge-loss'}">${t.result}</span></td><td style="text-align:right;color:${(t.pnl_pct||0)>=0?'var(--up)':'var(--down)'};">${(t.pnl_pct||0)>0?'+':''}${t.pnl_pct}%</td><td style="text-align:right;">₹${safeFmt(t.gross_pnl)}</td><td style="text-align:right;color:${isWin?'var(--up)':'var(--down)'};font-weight:700;">${isWin?'+':''}₹${safeFmt(t.net_pnl)}</td><td style="text-align:right;">₹${safeFmt(t.ending_capital)}</td>`;
         tTbody.appendChild(tr);
       });
     }
