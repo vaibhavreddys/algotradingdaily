@@ -74,7 +74,6 @@ HELP_USER = (
     "• /summary — strategy lifetime journal (wins, profit factor, ROI)\n"
     "• /health — infrastructure health: OpenAlgo gateway, broker auth, engine process\n"
     "• /recover — diagnose all 4 infra pillars and auto-heal degraded services\n"
-    "• /relogin — re-authenticate Shoonya broker session (headless Playwright)\n"
     "• /help  — show this message\n"
     "• /start — begin the invite-code flow\n"
     "• /stop  — unsubscribe from alerts"
@@ -90,7 +89,6 @@ BOT_COMMAND_LIST: List[BotCommand] = [
     BotCommand("summary", "Strategy lifetime journal: wins, profit factor, ROI"),
     BotCommand("health", "Infra health: OpenAlgo, broker auth, engine process"),
     BotCommand("recover", "Diagnose all 4 infra pillars and auto-heal degraded services"),
-    BotCommand("relogin", "Re-authenticate Shoonya broker session (headless Playwright)"),
     BotCommand("help", "Show this help message"),
     BotCommand("start", "Begin the invite-code subscription flow"),
     BotCommand("stop", "Unsubscribe from alerts"),
@@ -826,15 +824,6 @@ async def cmd_health(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     await _reply_markdown_safe(update, _build_health_text())
 
 
-async def cmd_relogin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not await _require_subscriber(update):
-        return
-    await update.message.reply_text("🔄 Initiating headless Shoonya re-login... (please wait ~15s)")
-    from core.system_recovery import recover_broker_session
-    ok, msg = recover_broker_session(force=True)
-    status_emoji = "✅" if ok else "❌"
-    await _reply_markdown_safe(update, f"{status_emoji} *[SHOONYA RE-LOGIN]*\n\n{msg}")
-
 
 async def cmd_recover(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not await _require_subscriber(update):
@@ -1040,7 +1029,6 @@ def main() -> int:
         app.add_handler(CommandHandler("status", cmd_status))
         app.add_handler(CommandHandler("health", cmd_health))
         app.add_handler(CommandHandler("recover", cmd_recover))
-        app.add_handler(CommandHandler("relogin", cmd_relogin))
         app.add_handler(CommandHandler("pnl", cmd_pnl))
         app.add_handler(CommandHandler("positions", cmd_positions))
         app.add_handler(CommandHandler("summary", cmd_summary))

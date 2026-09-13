@@ -168,7 +168,7 @@ class TestSystemRecovery(unittest.TestCase):
     def test_tg_bot_command_list_includes_recovery_commands(self):
         cmd_names = [cmd.command for cmd in BOT_COMMAND_LIST]
         self.assertIn("recover", cmd_names)
-        self.assertIn("relogin", cmd_names)
+        self.assertNotIn("relogin", cmd_names)
         self.assertIn("health", cmd_names)
 
     def test_system_watchdog_cli_weekend_noop(self):
