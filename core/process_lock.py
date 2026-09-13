@@ -49,6 +49,8 @@ class SingletonLock:
 
         if lock_dir:
             self.lock_dir = Path(lock_dir)
+        elif os.getenv("SINGLETON_LOCK_DIR"):
+            self.lock_dir = Path(os.getenv("SINGLETON_LOCK_DIR"))
         else:
             if sys.platform != "win32" and os.path.isdir("/tmp"):
                 self.lock_dir = Path("/tmp")

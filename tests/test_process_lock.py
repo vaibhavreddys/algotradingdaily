@@ -12,8 +12,10 @@ from core.process_lock import SingletonLock, AnotherInstanceRunningError
 class TestProcessLock(unittest.TestCase):
     def setUp(self):
         self.test_dir = tempfile.mkdtemp(prefix="lock_test_")
+        os.environ["SINGLETON_LOCK_DIR"] = self.test_dir
 
     def tearDown(self):
+        os.environ.pop("SINGLETON_LOCK_DIR", None)
         try:
             shutil.rmtree(self.test_dir)
         except Exception:
