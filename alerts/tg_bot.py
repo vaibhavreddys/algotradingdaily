@@ -303,8 +303,15 @@ def _build_positions_text(mode: str = "paper") -> str:
         entry = float(pos.get("entry_price", 0.0))
         sl = float(pos.get("current_sl", 0.0))
         tp = float(pos.get("target_price", 0.0))
+        direction = str(pos.get("direction", "SHORT")).upper()
+        is_long = (direction == "LONG")
 
-        if sl <= entry and sl > 0:
+        if is_long:
+            is_trailed = (sl >= entry and entry > 0)
+        else:
+            is_trailed = (sl <= entry and sl > 0)
+
+        if is_trailed:
             sl_note = f"₹{sl:,.2f} (🛡️ Trailed Breakeven)"
         else:
             sl_note = f"₹{sl:,.2f}"
@@ -313,16 +320,19 @@ def _build_positions_text(mode: str = "paper") -> str:
         tick = _safe_ltp(ticker)
         if tick and tick.get("ltp") is not None:
             ltp = float(tick["ltp"])
-            # Strategy is short-side, so a price drop = profit.
-            mtm = (entry - ltp) * qty
+            mtm = (ltp - entry) * qty if is_long else (entry - ltp) * qty
             mtm_pct = (mtm / (entry * qty) * 100.0) if entry * qty else 0.0
             mtm_line = f"• Est. MTM: {'+' if mtm >= 0 else '-'}₹{abs(mtm):,.2f} ({mtm_pct:+.2f}%)"
 
+        risk = abs(entry - sl)
+        reward = abs(tp - entry)
+        rr_str = f"1:{reward / risk:.1f} R:R" if risk > 0 else "1:2 R:R"
+
         lines.append(
-            f"{i}. `{clean}` (SHORT)\n"
+            f"{i}. `{clean}` ({direction})\n"
             f"   • Qty: {qty} | Entry: ₹{entry:,.2f}\n"
             f"   • Current SL: {sl_note}\n"
-            f"   • Target: ₹{tp:,.2f} (1:2 R:R)\n"
+            f"   • Target: ₹{tp:,.2f} ({rr_str})\n"
             f"   {mtm_line}"
         )
 
