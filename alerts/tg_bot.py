@@ -413,12 +413,9 @@ def _probe_engine_heartbeat(mode: str, stale_minutes: int = 30, config: Optional
     return "🟠", f"Stalled (last write {age_min:.0f}m ago)"
 
 
-_FUNDS_CACHE: Dict[str, Any] = {"timestamp": 0.0, "data": None}
-
-
-def _get_live_broker_funds(config: TradingConfig, ttl_sec: int = 15) -> Dict[str, Any]:
+def _get_live_broker_funds(config: TradingConfig) -> Dict[str, Any]:
     """
-    Fetches and caches live broker funds from OpenAlgo (15s TTL).
+    Fetches live broker funds from OpenAlgo.
     Returns dict:
       {
         'is_connected': bool,
@@ -428,28 +425,18 @@ def _get_live_broker_funds(config: TradingConfig, ttl_sec: int = 15) -> Dict[str
         'status_text': str
       }
     """
-    import time
-    now = time.time()
-    cached = _FUNDS_CACHE.get("data")
-    cached_ts = _FUNDS_CACHE.get("timestamp", 0.0)
-    if cached is not None and (now - cached_ts) < ttl_sec:
-        return cached
-
     broker_name = (getattr(config, "ACTIVE_BROKER", "shoonya") or "Shoonya").title()
     host = getattr(config, "OPENALGO_HOST", "http://127.0.0.1:5000")
     api_key = getattr(config, "OPENALGO_API_KEY", "")
 
     if not api_key:
-        res = {
+        return {
             "is_connected": False,
             "available_margin": None,
             "cash": None,
             "margin_used": None,
             "status_text": f"{broker_name}: API key not configured (standalone mode)",
         }
-        _FUNDS_CACHE["timestamp"] = now
-        _FUNDS_CACHE["data"] = res
-        return res
 
     try:
         from openalgo import api as OpenAlgoClient
@@ -458,38 +445,36 @@ def _get_live_broker_funds(config: TradingConfig, ttl_sec: int = 15) -> Dict[str
         if not isinstance(funds, dict) or funds.get("status") != "success":
             reason = funds.get("message") if isinstance(funds, dict) else None
             detail = f": {reason}" if reason else ""
-            res = {
+            return {
                 "is_connected": False,
                 "available_margin": None,
                 "cash": None,
                 "margin_used": None,
                 "status_text": f"{broker_name}: Auth failed / session expired{detail}",
             }
-        else:
-            data = funds.get("data", {})
-            if not data or not isinstance(data, dict) or ("availablecash" not in data and "cash" not in data and "net" not in data):
-                res = {
-                    "is_connected": False,
-                    "available_margin": None,
-                    "cash": None,
-                    "margin_used": None,
-                    "status_text": f"{broker_name}: Session expired (empty funds payload — login required)",
-                }
-            else:
-                cash_val = float(data.get("cash", data.get("availablecash", 0.0)) or 0.0)
-                used_val = float(data.get("marginused", data.get("margin_used", 0.0)) or 0.0)
-                payin_val = float(data.get("payin", 0.0) or 0.0)
-                avail_val = float(data.get("availablecash", data.get("net", cash_val + payin_val - used_val)) or 0.0)
+        data = funds.get("data", {})
+        if not data or not isinstance(data, dict) or ("availablecash" not in data and "cash" not in data and "net" not in data):
+            return {
+                "is_connected": False,
+                "available_margin": None,
+                "cash": None,
+                "margin_used": None,
+                "status_text": f"{broker_name}: Session expired (empty funds payload — login required)",
+            }
+        cash_val = float(data.get("cash", data.get("availablecash", 0.0)) or 0.0)
+        used_val = float(data.get("marginused", data.get("margin_used", 0.0)) or 0.0)
+        payin_val = float(data.get("payin", 0.0) or 0.0)
+        avail_val = float(data.get("availablecash", data.get("net", cash_val + payin_val - used_val)) or 0.0)
 
-                res = {
-                    "is_connected": True,
-                    "available_margin": avail_val,
-                    "cash": cash_val,
-                    "margin_used": used_val,
-                    "status_text": f"{broker_name}: Authenticated (Avail Margin: ₹{avail_val:,.2f} | Cash: ₹{cash_val:,.2f})",
-                }
+        return {
+            "is_connected": True,
+            "available_margin": avail_val,
+            "cash": cash_val,
+            "margin_used": used_val,
+            "status_text": f"{broker_name}: Authenticated (Avail Margin: ₹{avail_val:,.2f} | Cash: ₹{cash_val:,.2f})",
+        }
     except Exception as e:
-        res = {
+        return {
             "is_connected": False,
             "available_margin": None,
             "cash": None,
@@ -497,20 +482,16 @@ def _get_live_broker_funds(config: TradingConfig, ttl_sec: int = 15) -> Dict[str
             "status_text": f"{broker_name}: Probe failed ({type(e).__name__})",
         }
 
-    _FUNDS_CACHE["timestamp"] = now
-    _FUNDS_CACHE["data"] = res
-    return res
 
-
-def _probe_broker_connection(config: TradingConfig) -> str:
+def _probe_broker_connection(config: TradingConfig, f_info: Optional[Dict[str, Any]] = None) -> str:
     """Returns formatted broker connection status inside brackets, e.g. (🟢 Broker: Shoonya Connected)."""
     broker_name = (getattr(config, "ACTIVE_BROKER", "shoonya") or "Shoonya").title()
     if not getattr(config, "OPENALGO_API_KEY", ""):
         return "(🟡 Broker: Standalone / Skipped)"
-    f_info = _get_live_broker_funds(config)
-    if f_info["is_connected"]:
+    info = f_info if f_info is not None else _get_live_broker_funds(config)
+    if info["is_connected"]:
         return f"(🟢 Broker: {broker_name} Connected)"
-    if "probe failed" in f_info["status_text"].lower():
+    if "probe failed" in info["status_text"].lower():
         return f"(⚪ Broker: {broker_name} Offline)"
     return f"(🔴 Broker: {broker_name} Session Expired)"
 
@@ -678,7 +659,6 @@ def _build_status_text(config: TradingConfig = CONFIG) -> str:
     """Engine + market heartbeat, active strategy, capital and broker connection status."""
     engine_icon, engine_text = _probe_engine_heartbeat(config.TRADING_MODE, config=config)
     market_icon, market_text = _probe_market_status(config)
-    broker_tag = _probe_broker_connection(config)
     timeframe = getattr(config, "TIMEFRAME", "15m")
     try:
         from strategies.registry import load_strategy_instance
@@ -693,6 +673,7 @@ def _build_status_text(config: TradingConfig = CONFIG) -> str:
         strategy_line = f"VWAP-Stoch Trend v1.3.0 ({timeframe})"
 
     f_info = _get_live_broker_funds(config)
+    broker_tag = _probe_broker_connection(config, f_info=f_info)
     is_live = (str(config.TRADING_MODE).lower() == "live")
     broker_title = (getattr(config, "ACTIVE_BROKER", "shoonya") or "Shoonya").title()
 

@@ -192,6 +192,7 @@ class TestOnDemandCommands(unittest.TestCase):
 
     def test_probe_engine_heartbeat_no_trades_yet(self):
         with patch("core.market_calendar.is_market_open", return_value=True), \
+             patch("pathlib.Path.exists", return_value=False), \
              patch("core.trade_db.get_trade_journal", return_value=[]):
             icon, text = self.tg_bot._probe_engine_heartbeat("paper")
         self.assertEqual(icon, "🟢")
@@ -200,6 +201,7 @@ class TestOnDemandCommands(unittest.TestCase):
     def test_probe_engine_heartbeat_fresh_write(self):
         now = datetime.datetime.now()
         with patch("core.market_calendar.is_market_open", return_value=True), \
+             patch("pathlib.Path.exists", return_value=False), \
              patch("core.trade_db.get_trade_journal", return_value=[
                  {"exit_time": now.strftime("%Y-%m-%d %H:%M:%S")}
              ]):
@@ -210,6 +212,7 @@ class TestOnDemandCommands(unittest.TestCase):
     def test_probe_engine_heartbeat_stale_write(self):
         long_ago = datetime.datetime.now() - datetime.timedelta(hours=2)
         with patch("core.market_calendar.is_market_open", return_value=True), \
+             patch("pathlib.Path.exists", return_value=False), \
              patch("core.trade_db.get_trade_journal", return_value=[
                  {"exit_time": long_ago.strftime("%Y-%m-%d %H:%M:%S")}
              ]):
