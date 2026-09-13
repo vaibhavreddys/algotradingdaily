@@ -73,6 +73,8 @@ HELP_USER = (
     "• /positions — currently open trades with trailing status\n"
     "• /summary — strategy lifetime journal (wins, profit factor, ROI)\n"
     "• /health — infrastructure health: OpenAlgo gateway, broker auth, engine process\n"
+    "• /recover — diagnose all 4 infra pillars and auto-heal degraded services\n"
+    "• /relogin — re-authenticate Shoonya broker session (headless Playwright)\n"
     "• /help  — show this message\n"
     "• /start — begin the invite-code flow\n"
     "• /stop  — unsubscribe from alerts"
@@ -87,6 +89,8 @@ BOT_COMMAND_LIST: List[BotCommand] = [
     BotCommand("positions", "Currently open trades with trailing SL status"),
     BotCommand("summary", "Strategy lifetime journal: wins, profit factor, ROI"),
     BotCommand("health", "Infra health: OpenAlgo, broker auth, engine process"),
+    BotCommand("recover", "Diagnose all 4 infra pillars and auto-heal degraded services"),
+    BotCommand("relogin", "Re-authenticate Shoonya broker session (headless Playwright)"),
     BotCommand("help", "Show this help message"),
     BotCommand("start", "Begin the invite-code subscription flow"),
     BotCommand("stop", "Unsubscribe from alerts"),
@@ -822,6 +826,41 @@ async def cmd_health(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     await _reply_markdown_safe(update, _build_health_text())
 
 
+async def cmd_relogin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not await _require_subscriber(update):
+        return
+    await update.message.reply_text("🔄 Initiating headless Shoonya re-login... (please wait ~15s)")
+    from core.system_recovery import recover_broker_session
+    ok, msg = recover_broker_session(force=True)
+    status_emoji = "✅" if ok else "❌"
+    await _reply_markdown_safe(update, f"{status_emoji} *[SHOONYA RE-LOGIN]*\n\n{msg}")
+
+
+async def cmd_recover(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not await _require_subscriber(update):
+        return
+    await update.message.reply_text("🛠️ Running full multi-pillar diagnostic and auto-recovery...")
+    from core.system_recovery import auto_heal_all
+    report = auto_heal_all()
+    actions = report.get("actions", [])
+    actions_text = "\n".join(f"• {a}" for a in actions) if actions else "• All services were already healthy (no actions needed)."
+    final_diag = report.get("final", {})
+    all_ok = report.get("all_healed", False)
+    status_emoji = "🟢" if all_ok else "🟡"
+
+    text = (
+        f"🛠️ *[INFRASTRUCTURE AUTO-HEAL]*\n"
+        f"Status: {status_emoji} {'Healthy' if all_ok else 'Degraded'}\n\n"
+        f"*Actions Taken:*\n{actions_text}\n\n"
+        f"*Current Status:*\n"
+        f"• Gateway: {'🟢 Active' if final_diag.get('gateway', {}).get('healthy') else '🔴 Down'}\n"
+        f"• Broker: {'🟢 Authenticated' if final_diag.get('broker', {}).get('authenticated') else '🔴 Expired'} (Avail: ₹{final_diag.get('broker', {}).get('avail_margin', 0.0):,.2f})\n"
+        f"• Engine: {final_diag.get('engine', {}).get('detail', 'Stopped')}\n"
+        f"• Disk: {final_diag.get('resources', {}).get('disk_pct', 0.0)}% used ({final_diag.get('resources', {}).get('disk_free_gb', 0.0)}GB free)"
+    )
+    await _reply_markdown_safe(update, text)
+
+
 async def cmd_summary(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not await _require_subscriber(update):
         return
@@ -1000,6 +1039,8 @@ def main() -> int:
         app.add_handler(CommandHandler("help", cmd_help))
         app.add_handler(CommandHandler("status", cmd_status))
         app.add_handler(CommandHandler("health", cmd_health))
+        app.add_handler(CommandHandler("recover", cmd_recover))
+        app.add_handler(CommandHandler("relogin", cmd_relogin))
         app.add_handler(CommandHandler("pnl", cmd_pnl))
         app.add_handler(CommandHandler("positions", cmd_positions))
         app.add_handler(CommandHandler("summary", cmd_summary))

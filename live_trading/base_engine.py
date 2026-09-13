@@ -280,12 +280,22 @@ class BaseTradingEngine:
     def is_squareoff_time(self, now: Optional[datetime.datetime] = None) -> bool:
         return is_mc_sqoff(getattr(self.config, 'EXCHANGE', 'NSE'), now=now)
 
-    def get_seconds_until_next_candle(self, interval_mins: int = 15, now: Optional[datetime.datetime] = None) -> int:
+    def get_strategy_interval_seconds(self) -> int:
+        """Dynamically parses strategy timeframe into seconds ('5m' -> 300, '15m' -> 900)."""
+        tf = str(getattr(self, 'timeframe', '15m')).lower().strip()
+        if tf.endswith('m') and tf[:-1].isdigit():
+            return int(tf[:-1]) * 60
+        elif tf.endswith('h') and tf[:-1].isdigit():
+            return int(tf[:-1]) * 3600
+        return 900
+
+    def get_seconds_until_next_candle(self, interval_mins: Optional[int] = None, now: Optional[datetime.datetime] = None) -> int:
         now = now or datetime.datetime.now()
+        eff_interval = interval_mins if interval_mins is not None else max(1, self.get_strategy_interval_seconds() // 60)
         curr_min = now.minute
         curr_sec = now.second
-        remainder = curr_min % interval_mins
-        wait_mins = interval_mins - remainder if remainder != 0 else (interval_mins if curr_sec > 5 else 0)
+        remainder = curr_min % eff_interval
+        wait_mins = eff_interval - remainder if remainder != 0 else (eff_interval if curr_sec > 5 else 0)
         wait_secs = (wait_mins * 60) - curr_sec + 2
         return max(1, wait_secs)
 
@@ -728,16 +738,35 @@ class BaseTradingEngine:
                         self.scan_and_execute_signals(nifty_pct_map)
 
                 self.update_heartbeat("scanning")
-                wait_sec = self.get_seconds_until_next_candle(interval_mins=15, now=now)
+                candle_duration_sec = self.get_strategy_interval_seconds()
+                wait_sec = self.get_seconds_until_next_candle(now=now)
                 next_check = (now + datetime.timedelta(seconds=wait_sec)).strftime('%H:%M:%S')
-                print(f"[{now.strftime('%H:%M:%S')}] ⏳ Next 15m scan in {wait_sec}s ({next_check}). Active slots: {len(self.active_positions)}/{self.config.MAX_CONCURRENT_POSITIONS}")
+                tf_label = getattr(self, 'timeframe', '15m')
+                print(f"[{now.strftime('%H:%M:%S')}] ⏳ Next {tf_label} scan in {wait_sec}s ({next_check}). Active slots: {len(self.active_positions)}/{self.config.MAX_CONCURRENT_POSITIONS}")
 
                 poll_interval = self.config.POSITION_MONITOR_INTERVAL_SEC
                 target_wake_time = time.time() + wait_sec
+                preflight_window_sec = min(60.0, max(30.0, candle_duration_sec * 0.15))
+                broker_preflighted = False
                 prewarmed = False
 
                 while time.time() < target_wake_time:
                     remaining_time = target_wake_time - time.time()
+
+                    # 1. Proactive Broker Auth Pre-flight Check (T - preflight_window)
+                    if remaining_time <= preflight_window_sec and not broker_preflighted and self.mode == "live":
+                        try:
+                            from core.system_recovery import probe_broker_auth, recover_broker_session
+                            b_probe = probe_broker_auth(self.config)
+                            if not b_probe.get("authenticated"):
+                                print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] ⚠️ [PRE-FLIGHT] Shoonya broker session expired. Auto-healing now before candle close...")
+                                ok, msg = recover_broker_session(self.config, force=True)
+                                print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] {'✅' if ok else '❌'} [PRE-FLIGHT RECOVERY] {msg}")
+                            broker_preflighted = True
+                        except Exception:
+                            pass
+
+                    # 2. Benchmark Feed Pre-warm (T - 5s)
                     if remaining_time <= 5.0 and not prewarmed and self.is_entry_window_active(datetime.datetime.now()):
                         try:
                             self.prewarm_benchmark_feed()
