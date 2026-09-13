@@ -51,6 +51,7 @@ from core.trade_db import (
     get_trade_journal,
     get_today_realized_pnl,
 )
+from core.process_lock import SingletonLock
 
 
 logging.basicConfig(
@@ -972,38 +973,48 @@ def main() -> int:
         log.error("TELEGRAM_INVITE_CODE is not set; refusing to start the bot.")
         return 1
 
-    registry = SubscribersRegistry()
-    if registry.seed_env_chat_id():
-        log.info("Seeded TELEGRAM_CHAT_ID into subscribers table.")
+    bot_lock = SingletonLock(service_name="telegram_bot", raise_on_conflict=False)
+    if not bot_lock.acquire():
+        locked_pid = bot_lock.get_locked_pid()
+        pid_msg = f" (PID {locked_pid})" if locked_pid else ""
+        log.error("Another instance of Telegram Bot is already running%s. Exiting to prevent 409 conflict.", pid_msg)
+        return 1
 
-    owner = _owner_chat_id()
-    if owner is not None:
-        log.info("Owner chat_id configured: %s", owner)
-    else:
-        log.info("TELEGRAM_OWNER_CHAT_ID not set; owner admin commands disabled.")
+    try:
+        registry = SubscribersRegistry()
+        if registry.seed_env_chat_id():
+            log.info("Seeded TELEGRAM_CHAT_ID into subscribers table.")
 
-    log.info("Starting long-polling Telegram bot at %s", datetime.datetime.now().isoformat(timespec="seconds"))
+        owner = _owner_chat_id()
+        if owner is not None:
+            log.info("Owner chat_id configured: %s", owner)
+        else:
+            log.info("TELEGRAM_OWNER_CHAT_ID not set; owner admin commands disabled.")
 
-    app = ApplicationBuilder().token(token).post_init(_post_init).build()
+        log.info("Starting long-polling Telegram bot at %s", datetime.datetime.now().isoformat(timespec="seconds"))
 
-    app.add_handler(CommandHandler("start", cmd_start))
-    app.add_handler(CommandHandler("stop", cmd_stop))
-    app.add_handler(CommandHandler("help", cmd_help))
-    app.add_handler(CommandHandler("status", cmd_status))
-    app.add_handler(CommandHandler("health", cmd_health))
-    app.add_handler(CommandHandler("pnl", cmd_pnl))
-    app.add_handler(CommandHandler("positions", cmd_positions))
-    app.add_handler(CommandHandler("summary", cmd_summary))
-    app.add_handler(CommandHandler("subscribers", cmd_subscribers))
-    app.add_handler(CommandHandler("pending", cmd_pending))
-    app.add_handler(CommandHandler("revoke", cmd_revoke))
-    app.add_handler(CommandHandler("reinstate", cmd_reinstate))
-    app.add_handler(CommandHandler("ban", cmd_ban))
-    # Free-text handler last so commands win.
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+        app = ApplicationBuilder().token(token).post_init(_post_init).build()
 
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
-    return 0
+        app.add_handler(CommandHandler("start", cmd_start))
+        app.add_handler(CommandHandler("stop", cmd_stop))
+        app.add_handler(CommandHandler("help", cmd_help))
+        app.add_handler(CommandHandler("status", cmd_status))
+        app.add_handler(CommandHandler("health", cmd_health))
+        app.add_handler(CommandHandler("pnl", cmd_pnl))
+        app.add_handler(CommandHandler("positions", cmd_positions))
+        app.add_handler(CommandHandler("summary", cmd_summary))
+        app.add_handler(CommandHandler("subscribers", cmd_subscribers))
+        app.add_handler(CommandHandler("pending", cmd_pending))
+        app.add_handler(CommandHandler("revoke", cmd_revoke))
+        app.add_handler(CommandHandler("reinstate", cmd_reinstate))
+        app.add_handler(CommandHandler("ban", cmd_ban))
+        # Free-text handler last so commands win.
+        app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+
+        app.run_polling(allowed_updates=Update.ALL_TYPES)
+        return 0
+    finally:
+        bot_lock.release()
 
 
 if __name__ == "__main__":

@@ -34,6 +34,7 @@ from config import CONFIG, TradingConfig
 from core.market_calendar import is_market_open as is_mc_open, is_market_closed as is_mc_closed, get_next_market_session as get_mc_next_session, get_seconds_until_market_open as get_mc_sec_open, get_seconds_until_entry_window as get_mc_sec_entry, is_entry_window_active as is_mc_entry_active, is_squareoff_time as is_mc_sqoff
 from core.capital import calculate_order_quantity, get_persisted_paper_capital
 from core.risk import is_daily_loss_limit_reached
+from core.process_lock import SingletonLock
 from core.trade_db import (
     TradeExitReason,
     EXIT_DISPLAY_LABELS,
@@ -138,6 +139,7 @@ class BaseTradingEngine:
         self._benchmark_timestamp: Optional[datetime.datetime] = None
 
         self.day_starting_capital = self.get_account_capital()
+        self._process_lock = SingletonLock(service_name=f"engine_{self.mode}", raise_on_conflict=False)
 
     def is_daily_circuit_breaker_active(self) -> bool:
         """Checks if daily realized drawdowns have reached the daily safety threshold."""
@@ -658,6 +660,19 @@ class BaseTradingEngine:
 
     def run_live_loop(self) -> None:
         """Universal Macro/Micro live loop driver for both Paper and Live modes."""
+        if not self._process_lock.acquire():
+            locked_pid = self._process_lock.get_locked_pid()
+            pid_msg = f" (PID {locked_pid})" if locked_pid else ""
+            err_msg = f"Another instance of {self.mode.upper()} Trading Engine is already active{pid_msg}. Aborting startup to prevent duplicate orders."
+            print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] 🚨 [FATAL ERROR] {err_msg}")
+            notify_system_error(
+                component="EngineStartup",
+                error_msg=err_msg,
+                severity="critical",
+                action_taken="Startup aborted immediately; existing engine continues safely.",
+            )
+            return
+
         print(f"       ENGINE: {self.strategy_name} {self.strategy_version} ({self.mode.upper()} TRADING)")
         print(f"       Capital: Rs.{self.get_account_capital():,.0f} | Max Slots: {self.config.MAX_CONCURRENT_POSITIONS}")
         print(f"       Scanning: 15m Candle Closes | Guardian: {self.config.POSITION_MONITOR_INTERVAL_SEC}s Ticks")
@@ -747,6 +762,8 @@ class BaseTradingEngine:
             print(f"[INTERRUPT] User interrupted {self.mode.upper()} engine (Ctrl+C). Generating report...")
             self.generate_eod_report()
             self.update_heartbeat("closed")
+        finally:
+            self._process_lock.release()
 
     # --- Abstract Hooks to be implemented by child classes ---
     def execute_entry(self, symbol: str, entry_price: float, sl_price: float, tp_price: float) -> bool:

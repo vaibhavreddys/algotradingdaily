@@ -566,26 +566,40 @@ class MCXIngestionEngine:
         refresh_boundary: bool = False,
     ) -> int:
         """Validate the session once, then ingest each commodity sequentially."""
-        commodities = list(commodities or MCX_COMMODITIES)
-        self.authenticate()
-        grand_total = 0
-        failures: list[str] = []
-        for commodity in commodities:
-            try:
-                grand_total += self.ingest_commodity(
-                    commodity, start_date=start_date, end_date=end_date,
-                    refresh_boundary=refresh_boundary,
-                )
-            except (
-                ShoonyaAuthError, ShoonyaGatewayError, ShoonyaHistoryError,
-                SymbolResolutionError, KeyError, TimeoutError,
-            ) as exc:
-                failures.append(commodity)
-                logger.error("Ingestion failed for %s: %s", commodity, exc)
-        if failures:
-            logger.error("Failed commodities: %s", ", ".join(failures))
-        logger.info("Run complete: %d total rows upserted", grand_total)
-        return grand_total
+        from core.process_lock import SingletonLock
+        lock = SingletonLock(service_name="duckdb_ingest", raise_on_conflict=False)
+        if not lock.acquire():
+            locked_pid = lock.get_locked_pid()
+            pid_msg = f" (PID {locked_pid})" if locked_pid else ""
+            logger.warning(
+                "Another instance of MCX DuckDB Ingestion is already running%s. Aborting this run to prevent DuckDB file lock collision.",
+                pid_msg,
+            )
+            return 0
+
+        try:
+            commodities = list(commodities or MCX_COMMODITIES)
+            self.authenticate()
+            grand_total = 0
+            failures: list[str] = []
+            for commodity in commodities:
+                try:
+                    grand_total += self.ingest_commodity(
+                        commodity, start_date=start_date, end_date=end_date,
+                        refresh_boundary=refresh_boundary,
+                    )
+                except (
+                    ShoonyaAuthError, ShoonyaGatewayError, ShoonyaHistoryError,
+                    SymbolResolutionError, KeyError, TimeoutError,
+                ) as exc:
+                    failures.append(commodity)
+                    logger.error("Ingestion failed for %s: %s", commodity, exc)
+            if failures:
+                logger.error("Failed commodities: %s", ", ".join(failures))
+            logger.info("Run complete: %d total rows upserted", grand_total)
+            return grand_total
+        finally:
+            lock.release()
 
     def stats(self) -> pd.DataFrame:
         """Per-symbol coverage summary for quick health checks."""
