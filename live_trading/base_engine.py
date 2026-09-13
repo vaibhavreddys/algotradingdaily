@@ -618,11 +618,19 @@ class BaseTradingEngine:
 
         from core.report import print_daily_eod_report
         ending_balance = self.get_account_capital()
+        day_net_pnl = sum(t.get('net_pnl', 0.0) for t in day_trades)
+        day_start_cap = getattr(self, 'day_starting_capital', 0.0)
+        if day_start_cap <= 0:
+            day_start_cap = ending_balance - day_net_pnl
+        if day_start_cap <= 0:
+            day_start_cap = getattr(self.config, 'INITIAL_CAPITAL', 100000.0)
+
         eod_msg, _ = print_daily_eod_report(
             day_trades=day_trades,
-            initial_capital=self.config.INITIAL_CAPITAL,
+            initial_capital=day_start_cap,
             ending_balance=ending_balance,
-            date_str=today_date
+            date_str=today_date,
+            inception_capital=getattr(self.config, 'INITIAL_CAPITAL', 100000.0)
         )
         # Always dispatch EOD summary scorecard to Telegram (even on 0-trade discipline days)
         notify_eod_summary(report_text=eod_msg, mode=self.mode, config=self.config)

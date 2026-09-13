@@ -273,16 +273,19 @@ def print_daily_eod_report(
     day_trades: List[Dict[str, Any]],
     initial_capital: float,
     ending_balance: float,
-    date_str: str
+    date_str: str,
+    inception_capital: Optional[float] = None
 ) -> Tuple[str, List[str]]:
     """
     Renders daily EOD session performance report and returns (summary_report_text, trade_lines).
+    initial_capital represents the session/day starting balance.
+    inception_capital optionally represents the initial account deposit (e.g. ₹100,000).
     """
     print("\n=====================================================")
     print("         DAILY EOD PERFORMANCE REPORT (PAPER TRADING)")
     print("=====================================================")
     print(f"Date                 : {date_str}")
-    print(f"Initial Balance      : ₹{initial_capital:,.2f}")
+    print(f"Day Starting Balance : ₹{initial_capital:,.2f}")
 
     if not day_trades:
         print("Total Trades Taken   : 0 (No trades recorded for this date)")
@@ -303,7 +306,12 @@ def print_daily_eod_report(
     gross_pnl = sum(t.get('gross_pnl', 0.0) for t in day_trades)
     taxes_fees = sum(t.get('taxes_fees', 0.0) for t in day_trades)
     net_pnl = sum(t.get('net_pnl', 0.0) for t in day_trades)
-    roi_pct = (net_pnl / initial_capital) * 100
+    daily_roi_pct = (net_pnl / initial_capital) * 100 if initial_capital > 0 else 0.0
+
+    overall_roi_str = ""
+    if inception_capital and inception_capital > 0:
+        overall_roi = ((ending_balance - inception_capital) / inception_capital) * 100
+        overall_roi_str = f" (`{'+' if overall_roi >= 0 else ''}{overall_roi:.2f}% Overall`)"
 
     print(f"Total Trades Taken   : {total_trades} ({win_count} Wins / {loss_count} Losses)")
     print(f"Win Rate             : {win_rate:.1f}%")
@@ -311,7 +319,7 @@ def print_daily_eod_report(
     print(f"Gross Realized PnL   : {'+' if gross_pnl >= 0 else '-'}₹{abs(gross_pnl):,.2f}")
     print(f"Simulated Taxes/Fees : -₹{taxes_fees:,.2f}")
     print(f"Net Realized PnL     : {'+' if net_pnl >= 0 else '-'}₹{abs(net_pnl):,.2f} (Post-All Charges)")
-    print(f"Ending Balance       : ₹{ending_balance:,.2f} ({'+' if roi_pct >= 0 else ''}{roi_pct:.2f}% Daily ROI)")
+    print(f"Ending Balance       : ₹{ending_balance:,.2f} ({'+' if daily_roi_pct >= 0 else ''}{daily_roi_pct:.2f}% Daily ROI)")
     print("=====================================================")
     print("Trade Log:")
     
@@ -349,8 +357,8 @@ def print_daily_eod_report(
         f"• *Total Trades*: {total_trades} ({win_count}W / {loss_count}L | Win Rate: {win_rate:.1f}%)\n"
         f"• *Gross PnL*: `{'₹+' if gross_pnl >= 0 else '₹-'}{abs(gross_pnl):,.2f}`\n"
         f"• *Taxes & Charges*: `₹{taxes_fees:,.2f}`\n"
-        f"• *Net Realized PnL*: `{'₹+' if net_pnl >= 0 else '₹-'}{abs(net_pnl):,.2f}` (`{'+' if roi_pct >= 0 else ''}{roi_pct:.2f}%`)\n"
-        f"• *Ending Account Capital*: `₹{ending_balance:,.2f}`\n\n"
+        f"• *Net Realized PnL*: `{'₹+' if net_pnl >= 0 else '₹-'}{abs(net_pnl):,.2f}` (`{'+' if daily_roi_pct >= 0 else ''}{daily_roi_pct:.2f}%`)\n"
+        f"• *Ending Account Capital*: `₹{ending_balance:,.2f}`{overall_roi_str}\n\n"
         f"*Trade Breakdown:*\n" + "\n".join(trade_lines)
     )
 
