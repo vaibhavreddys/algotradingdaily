@@ -413,25 +413,106 @@ def _probe_engine_heartbeat(mode: str, stale_minutes: int = 30, config: Optional
     return "🟠", f"Stalled (last write {age_min:.0f}m ago)"
 
 
-def _probe_broker_connection(config: TradingConfig) -> str:
-    """Returns formatted broker connection status inside brackets, e.g. (🟢 Broker: Shoonya Connected)."""
+_FUNDS_CACHE: Dict[str, Any] = {"timestamp": 0.0, "data": None}
+
+
+def _get_live_broker_funds(config: TradingConfig, ttl_sec: int = 15) -> Dict[str, Any]:
+    """
+    Fetches and caches live broker funds from OpenAlgo (15s TTL).
+    Returns dict:
+      {
+        'is_connected': bool,
+        'available_margin': Optional[float],
+        'cash': Optional[float],
+        'margin_used': Optional[float],
+        'status_text': str
+      }
+    """
+    import time
+    now = time.time()
+    cached = _FUNDS_CACHE.get("data")
+    cached_ts = _FUNDS_CACHE.get("timestamp", 0.0)
+    if cached is not None and (now - cached_ts) < ttl_sec:
+        return cached
+
     broker_name = (getattr(config, "ACTIVE_BROKER", "shoonya") or "Shoonya").title()
     host = getattr(config, "OPENALGO_HOST", "http://127.0.0.1:5000")
     api_key = getattr(config, "OPENALGO_API_KEY", "")
+
     if not api_key:
-        return "(🟡 Broker: Standalone / Skipped)"
+        res = {
+            "is_connected": False,
+            "available_margin": None,
+            "cash": None,
+            "margin_used": None,
+            "status_text": f"{broker_name}: API key not configured (standalone mode)",
+        }
+        _FUNDS_CACHE["timestamp"] = now
+        _FUNDS_CACHE["data"] = res
+        return res
+
     try:
         from openalgo import api as OpenAlgoClient
-        client = OpenAlgoClient(api_key=api_key, host=host)
+        client = OpenAlgoClient(api_key=api_key, host=host, timeout=8)
         funds = client.funds()
         if not isinstance(funds, dict) or funds.get("status") != "success":
-            return f"(🔴 Broker: {broker_name} Disconnected / Auth Failed)"
-        data = funds.get("data", {})
-        if not data or not isinstance(data, dict) or ("availablecash" not in data and "cash" not in data and "net" not in data):
-            return f"(🔴 Broker: {broker_name} Session Expired)"
+            reason = funds.get("message") if isinstance(funds, dict) else None
+            detail = f": {reason}" if reason else ""
+            res = {
+                "is_connected": False,
+                "available_margin": None,
+                "cash": None,
+                "margin_used": None,
+                "status_text": f"{broker_name}: Auth failed / session expired{detail}",
+            }
+        else:
+            data = funds.get("data", {})
+            if not data or not isinstance(data, dict) or ("availablecash" not in data and "cash" not in data and "net" not in data):
+                res = {
+                    "is_connected": False,
+                    "available_margin": None,
+                    "cash": None,
+                    "margin_used": None,
+                    "status_text": f"{broker_name}: Session expired (empty funds payload — login required)",
+                }
+            else:
+                cash_val = float(data.get("cash", data.get("availablecash", 0.0)) or 0.0)
+                used_val = float(data.get("marginused", data.get("margin_used", 0.0)) or 0.0)
+                payin_val = float(data.get("payin", 0.0) or 0.0)
+                avail_val = float(data.get("availablecash", data.get("net", cash_val + payin_val - used_val)) or 0.0)
+
+                res = {
+                    "is_connected": True,
+                    "available_margin": avail_val,
+                    "cash": cash_val,
+                    "margin_used": used_val,
+                    "status_text": f"{broker_name}: Authenticated (Avail Margin: ₹{avail_val:,.2f} | Cash: ₹{cash_val:,.2f})",
+                }
+    except Exception as e:
+        res = {
+            "is_connected": False,
+            "available_margin": None,
+            "cash": None,
+            "margin_used": None,
+            "status_text": f"{broker_name}: Probe failed ({type(e).__name__})",
+        }
+
+    _FUNDS_CACHE["timestamp"] = now
+    _FUNDS_CACHE["data"] = res
+    return res
+
+
+def _probe_broker_connection(config: TradingConfig) -> str:
+    """Returns formatted broker connection status inside brackets, e.g. (🟢 Broker: Shoonya Connected)."""
+    broker_name = (getattr(config, "ACTIVE_BROKER", "shoonya") or "Shoonya").title()
+    if not getattr(config, "OPENALGO_API_KEY", ""):
+        return "(🟡 Broker: Standalone / Skipped)"
+    f_info = _get_live_broker_funds(config)
+    if f_info["is_connected"]:
         return f"(🟢 Broker: {broker_name} Connected)"
-    except Exception:
+    if "probe failed" in f_info["status_text"].lower():
         return f"(⚪ Broker: {broker_name} Offline)"
+    return f"(🔴 Broker: {broker_name} Session Expired)"
 
 
 def _probe_openalgo_gateway(config: TradingConfig) -> Tuple[str, str]:
@@ -536,30 +617,17 @@ def _probe_broker_auth(config: TradingConfig) -> Tuple[str, str]:
     """
     Returns (icon, status_text) for the broker session behind OpenAlgo. Uses
     the funds() round-trip as the session-validity check, mirroring
-    scripts/verify_gateway.py: a non-success status or empty payload means the
-    broker login has expired and must be redone in the OpenAlgo UI.
+    scripts/verify_gateway.py.
     """
-    broker_name = (getattr(config, "ACTIVE_BROKER", "shoonya") or "Shoonya").title()
-    host = getattr(config, "OPENALGO_HOST", "http://127.0.0.1:5000")
-    api_key = getattr(config, "OPENALGO_API_KEY", "")
-    if not api_key:
+    if not getattr(config, "OPENALGO_API_KEY", ""):
+        broker_name = (getattr(config, "ACTIVE_BROKER", "shoonya") or "Shoonya").title()
         return "🟡", f"{broker_name}: API key not configured (standalone mode)"
-    try:
-        from openalgo import api as OpenAlgoClient
-        # Short timeout so a hung gateway degrades this line instead of
-        # stalling the whole /health reply.
-        client = OpenAlgoClient(api_key=api_key, host=host, timeout=8)
-        funds = client.funds()
-        if not isinstance(funds, dict) or funds.get("status") != "success":
-            reason = funds.get("message") if isinstance(funds, dict) else None
-            detail = f": {reason}" if reason else ""
-            return "🔴", f"{broker_name}: Auth failed / session expired{detail}"
-        data = funds.get("data", {})
-        if not data or not isinstance(data, dict) or ("availablecash" not in data and "cash" not in data and "net" not in data):
-            return "🔴", f"{broker_name}: Session expired (empty funds payload — login required)"
-        return "🟢", f"{broker_name}: Authenticated"
-    except Exception as e:
-        return "⚪", f"{broker_name}: Probe failed ({type(e).__name__})"
+    f_info = _get_live_broker_funds(config)
+    if f_info["is_connected"]:
+        return "🟢", f_info["status_text"]
+    if "probe failed" in f_info["status_text"].lower():
+        return "⚪", f_info["status_text"]
+    return "🔴", f_info["status_text"]
 
 
 def _probe_market_status(config: TradingConfig) -> Tuple[str, str]:
@@ -623,8 +691,29 @@ def _build_status_text(config: TradingConfig = CONFIG) -> str:
         strategy_line = f"{strat_name} v{strat_ver} ({timeframe})"
     except Exception:
         strategy_line = f"VWAP-Stoch Trend v1.3.0 ({timeframe})"
-    from core.capital import get_persisted_paper_capital
-    cap = get_persisted_paper_capital(initial_capital=config.INITIAL_CAPITAL, mode=config.TRADING_MODE)
+
+    f_info = _get_live_broker_funds(config)
+    is_live = (str(config.TRADING_MODE).lower() == "live")
+    broker_title = (getattr(config, "ACTIVE_BROKER", "shoonya") or "Shoonya").title()
+
+    if is_live:
+        if f_info["is_connected"] and f_info["available_margin"] is not None:
+            capital_lines = [
+                f"• Available Margin: ₹{f_info['available_margin']:,.2f} ({broker_title} Live)",
+                f"• Cash Balance: ₹{f_info['cash']:,.2f} (Margin Used: ₹{f_info['margin_used']:,.2f})"
+            ]
+        else:
+            capital_lines = [
+                f"• Account Capital: 🔴 {broker_title} Session Expired",
+                f"• Fallback Config: ₹{config.INITIAL_CAPITAL:,.2f}"
+            ]
+    else:
+        from core.capital import get_persisted_paper_capital
+        cap = get_persisted_paper_capital(initial_capital=config.INITIAL_CAPITAL, mode=config.TRADING_MODE)
+        capital_lines = [f"• Account Capital (Paper): ₹{cap:,.2f}"]
+        if f_info["is_connected"] and f_info["available_margin"] is not None and f_info["available_margin"] > 0:
+            capital_lines.append(f"• {broker_title} Live Margin: ₹{f_info['available_margin']:,.2f}")
+
     universe = (config.UNIVERSE or "NIFTY50").upper()
     universe_count = None
     try:
@@ -634,11 +723,13 @@ def _build_status_text(config: TradingConfig = CONFIG) -> str:
         pass
     universe_line = f"{universe} ({universe_count} Constituents)" if universe_count else universe
     next_scan = _next_scan_time(config)
+    cap_section = "\n".join(capital_lines)
+
     return (
         "🏥 *[SYSTEM STATUS]*\n"
         f"• Mode: `{config.TRADING_MODE.upper()} TRADING` {broker_tag}\n"
         f"• Strategy: `{strategy_line}`\n"
-        f"• Account Capital: ₹{cap:,.2f}\n"
+        f"{cap_section}\n"
         f"• Engine: {engine_icon} {engine_text}\n"
         f"• Market: {market_icon} {market_text}\n"
         f"• Universe: {universe_line}\n"
