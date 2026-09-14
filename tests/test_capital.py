@@ -54,7 +54,7 @@ class TestCapitalManagement(unittest.TestCase):
 
     def test_base_engine_get_account_capital_live_mock(self):
         engine = BaseTradingEngine(config=TradingConfig(TRADING_MODE="live", INITIAL_CAPITAL=10000.0))
-        mock_api = MagicMock()
+        mock_api = MagicMock(spec=["get_limits"])
         mock_api.get_limits.return_value = {
             'stat': 'Ok',
             'cash': '12500.00',
@@ -65,9 +65,20 @@ class TestCapitalManagement(unittest.TestCase):
         cap = engine.get_account_capital()
         self.assertEqual(cap, 12000.0)
 
+    def test_base_engine_get_account_capital_openalgo_funds_mock(self):
+        engine = BaseTradingEngine(config=TradingConfig(TRADING_MODE="live", INITIAL_CAPITAL=10000.0))
+        mock_api = MagicMock(spec=["funds"])
+        mock_api.funds.return_value = {
+            'status': 'success',
+            'data': {'availablecash': '5000.00'}
+        }
+        engine.api = mock_api
+        cap = engine.get_account_capital()
+        self.assertEqual(cap, 5000.0)
+
     def test_base_engine_get_account_capital_live_api_failure_fallback(self):
         engine = BaseTradingEngine(config=TradingConfig(TRADING_MODE="live", INITIAL_CAPITAL=10000.0))
-        mock_api = MagicMock()
+        mock_api = MagicMock(spec=["get_limits"])
         mock_api.get_limits.side_effect = Exception("Connection Timeout")
         engine.api = mock_api
         cap = engine.get_account_capital()

@@ -180,8 +180,9 @@ class BaseTradingEngine:
         """Returns the active available capital for position sizing."""
         if (self.mode == "live" or getattr(self.config, 'TRADING_MODE', 'paper') == "live") and self.api:
             try:
-                funds_fn = getattr(self.api, 'funds', None) or getattr(self.api, 'get_limits', None)
-                if funds_fn:
+                # 1. Try OpenAlgo SDK .funds()
+                funds_fn = getattr(self.api, 'funds', None)
+                if callable(funds_fn):
                     res = funds_fn()
                     if isinstance(res, dict) and res.get('status') == 'success':
                         data = res.get('data', {})
@@ -191,6 +192,11 @@ class BaseTradingEngine:
                                 avail_float = float(avail)
                                 if avail_float > 0:
                                     return avail_float
+
+                # 2. Try raw Shoonya .get_limits()
+                limits_fn = getattr(self.api, 'get_limits', None)
+                if callable(limits_fn):
+                    res = limits_fn()
                     auth_reason = self._looks_like_auth_failure(res)
                     if auth_reason:
                         notify_system_error(
