@@ -254,16 +254,7 @@ class LiveTradingEngine(BaseTradingEngine):
             broker_balance = None
             if self.api:
                 try:
-                    limits = self.api.get_limits()
-                    if limits and limits.get('stat') == 'Ok':
-                        cash = float(limits.get('cash', 0.0))
-                        payin = float(limits.get('payin', 0.0))
-                        margin_used = float(limits.get('marginused', 0.0))
-                        net_avail = (cash + payin) - margin_used
-                        if net_avail > 0:
-                            broker_balance = round(net_avail, 2)
-                        elif 'net' in limits:
-                            broker_balance = round(float(limits['net']), 2)
+                    broker_balance = round(self.get_account_capital(), 2)
                 except Exception:
                     pass
 
