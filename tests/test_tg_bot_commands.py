@@ -61,8 +61,11 @@ class TestOnDemandCommands(unittest.TestCase):
         # Import the bot module lazily so env is in place first.
         from alerts import tg_bot
         self.tg_bot = tg_bot
+        self._mode_patcher = patch.object(self.tg_bot, "get_active_trading_mode", return_value="paper")
+        self._mode_patcher.start()
 
     def tearDown(self):
+        self._mode_patcher.stop()
         self._tmpdir.cleanup()
         os.environ.pop("TELEGRAM_SUBSCRIBERS_DB_PATH", None)
 
@@ -548,7 +551,7 @@ class TestOnDemandCommands(unittest.TestCase):
         update = _make_update(chat_id=42)  # owner, not in subscribers table
         with patch.object(self.tg_bot, "_build_status_text", return_value="🏥 STATUS"):
             _run(self.tg_bot.cmd_status(update, MagicMock()))
-        update.message.reply_text.assert_awaited_once_with("🏥 STATUS", parse_mode="Markdown", reply_markup=None)
+        update.message.reply_text.assert_awaited_once_with("🏥 STATUS", parse_mode="Markdown")
 
     def test_active_subscriber_sees_positions(self):
         from unittest.mock import ANY

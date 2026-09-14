@@ -194,11 +194,15 @@ async def _reply_markdown_safe(
     """Replies using Markdown; falls back to plain text if Markdown parsing fails."""
     if update.message is None:
         return
+    kwargs: Dict[str, Any] = {"parse_mode": "Markdown"}
+    if reply_markup is not None:
+        kwargs["reply_markup"] = reply_markup
     try:
-        await update.message.reply_text(text, parse_mode="Markdown", reply_markup=reply_markup)
+        await update.message.reply_text(text, **kwargs)
     except Exception as e:
         log.warning("Markdown send failed (%s); falling back to plain text", e)
-        await update.message.reply_text(text, reply_markup=reply_markup)
+        kwargs.pop("parse_mode", None)
+        await update.message.reply_text(text, **kwargs)
 
 
 def _mode_toggle_keyboard(cmd: str, current_mode: str) -> InlineKeyboardMarkup:
