@@ -535,11 +535,12 @@ class TestOnDemandCommands(unittest.TestCase):
         update.message.reply_text.assert_not_awaited()
 
     def test_active_subscriber_sees_pnl(self):
+        from unittest.mock import ANY
         update = _make_update(chat_id=111)  # alice is subscribed
         with patch.object(self.tg_bot, "_build_pnl_text", return_value="📊 PNL CONTENT"):
             _run(self.tg_bot.cmd_pnl(update, MagicMock()))
         update.message.reply_text.assert_awaited_once_with(
-            "📊 PNL CONTENT", parse_mode="Markdown"
+            "📊 PNL CONTENT", parse_mode="Markdown", reply_markup=ANY
         )
 
     def test_owner_always_passes_access_check(self):
@@ -547,32 +548,65 @@ class TestOnDemandCommands(unittest.TestCase):
         update = _make_update(chat_id=42)  # owner, not in subscribers table
         with patch.object(self.tg_bot, "_build_status_text", return_value="🏥 STATUS"):
             _run(self.tg_bot.cmd_status(update, MagicMock()))
-        update.message.reply_text.assert_awaited_once_with("🏥 STATUS", parse_mode="Markdown")
+        update.message.reply_text.assert_awaited_once_with("🏥 STATUS", parse_mode="Markdown", reply_markup=None)
 
     def test_active_subscriber_sees_positions(self):
+        from unittest.mock import ANY
         update = _make_update(chat_id=222)
         with patch.object(self.tg_bot, "_build_positions_text", return_value="⚡ POSITIONS"):
             _run(self.tg_bot.cmd_positions(update, MagicMock()))
         update.message.reply_text.assert_awaited_once_with(
-            "⚡ POSITIONS", parse_mode="Markdown"
+            "⚡ POSITIONS", parse_mode="Markdown", reply_markup=ANY
         )
 
     def test_active_subscriber_sees_summary(self):
+        from unittest.mock import ANY
         update = _make_update(chat_id=111)
         with patch.object(self.tg_bot, "_build_summary_text", return_value="📈 SUMMARY"):
             _run(self.tg_bot.cmd_summary(update, MagicMock()))
         update.message.reply_text.assert_awaited_once_with(
-            "📈 SUMMARY", parse_mode="Markdown"
+            "📈 SUMMARY", parse_mode="Markdown", reply_markup=ANY
         )
+
+    def test_mode_toggle_callback_edits_message(self):
+        from unittest.mock import AsyncMock, ANY
+        update = MagicMock()
+        query = MagicMock()
+        query.data = "summary:paper"
+        query.message.chat.id = 111  # Alice, subscribed
+        query.answer = AsyncMock()
+        query.edit_message_text = AsyncMock()
+        update.callback_query = query
+
+        with patch.object(self.tg_bot, "_build_summary_text", return_value="📈 PAPER SUMMARY"):
+            _run(self.tg_bot.on_mode_toggle_callback(update, MagicMock()))
+
+        query.answer.assert_awaited_once()
+        query.edit_message_text.assert_awaited_once_with(
+            "📈 PAPER SUMMARY", parse_mode="Markdown", reply_markup=ANY
+        )
+
+    def test_mode_toggle_callback_unsubscribed_blocked(self):
+        from unittest.mock import AsyncMock
+        update = MagicMock()
+        query = MagicMock()
+        query.data = "summary:paper"
+        query.message.chat.id = 999  # Not subscribed
+        query.answer = AsyncMock()
+        query.edit_message_text = AsyncMock()
+        update.callback_query = query
+
+        _run(self.tg_bot.on_mode_toggle_callback(update, MagicMock()))
+        query.answer.assert_awaited_once_with("You must be subscribed to use this bot.", show_alert=True)
+        query.edit_message_text.assert_not_awaited()
 
     # --- main() registration --------------------------------------------
 
     def test_main_registers_new_command_handlers(self):
-        with patch.object(self.tg_bot, "ApplicationBuilder") as builder:
+        with patch.object(self.tg_bot, "ApplicationBuilder") as builder, \
+             patch("alerts.tg_bot.SingletonLock.acquire", return_value=True):
             app = MagicMock()
             # main() now chains: ApplicationBuilder().token(t).post_init(cb).build()
-            # So we need each link in the chain to return something that
-            # supports the next call.
             chain = MagicMock()
             chain.post_init.return_value = chain
             chain.build.return_value = app
@@ -586,8 +620,6 @@ class TestOnDemandCommands(unittest.TestCase):
                 registered.add(cmd)
         for cmd in ("start", "stop", "help", "status", "pnl", "positions", "summary", "subscribers"):
             self.assertIn(cmd, registered, f"CommandHandler for /{cmd} not registered")
-        # post_init must have been wired to the builder (used to register
-        # the slash command list with Telegram).
         self.assertTrue(chain.post_init.called, "post_init hook not wired into ApplicationBuilder")
 
 

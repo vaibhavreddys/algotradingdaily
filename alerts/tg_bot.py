@@ -35,12 +35,13 @@ if hasattr(sys.stdout, "reconfigure"):
     except Exception:
         pass
 
-from telegram import Update, BotCommand
+from telegram import Update, BotCommand, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
     ApplicationBuilder,
     CommandHandler,
     MessageHandler,
+    CallbackQueryHandler,
     ContextTypes,
     filters,
 )
@@ -185,15 +186,38 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(text, parse_mode="Markdown")
 
 
-async def _reply_markdown_safe(update: Update, text: str) -> None:
+async def _reply_markdown_safe(
+    update: Update,
+    text: str,
+    reply_markup: Optional[InlineKeyboardMarkup] = None,
+) -> None:
     """Replies using Markdown; falls back to plain text if Markdown parsing fails."""
     if update.message is None:
         return
     try:
-        await update.message.reply_text(text, parse_mode="Markdown")
+        await update.message.reply_text(text, parse_mode="Markdown", reply_markup=reply_markup)
     except Exception as e:
         log.warning("Markdown send failed (%s); falling back to plain text", e)
-        await update.message.reply_text(text)
+        await update.message.reply_text(text, reply_markup=reply_markup)
+
+
+def _mode_toggle_keyboard(cmd: str, current_mode: str) -> InlineKeyboardMarkup:
+    """
+    Creates inline buttons for toggling between Live and Paper modes.
+    cmd: 'pnl', 'positions', or 'summary'
+    current_mode: 'live' or 'paper'
+    """
+    is_live = (str(current_mode).lower() == "live")
+    live_label = "🟢 Live (Active)" if is_live else "🟢 Switch to Live"
+    paper_label = "📝 Switch to Paper" if is_live else "📝 Paper (Active)"
+
+    keyboard = [
+        [
+            InlineKeyboardButton(live_label, callback_data=f"{cmd}:live"),
+            InlineKeyboardButton(paper_label, callback_data=f"{cmd}:paper"),
+        ]
+    ]
+    return InlineKeyboardMarkup(keyboard)
 
 
 async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -277,7 +301,7 @@ def _build_pnl_text(mode: str = "paper", config: TradingConfig = CONFIG) -> str:
         mtm_note = " (n/a — live tick unavailable)"
 
     return (
-        f"📊 *[TODAY P&L SCORECARD]*\n"
+        f"📊 *[TODAY P&L SCORECARD ({mode.upper()})]*\n"
         f"• Date: `{today_prefix}`\n"
         f"• Realized P&L: {'+' if realized >= 0 else '-'}₹{abs(realized):,.2f}\n"
         f"• Open MTM P&L: {'+' if open_mtm_total >= 0 else '-'}₹{abs(open_mtm_total):,.2f}{mtm_note}\n"
@@ -863,7 +887,8 @@ async def cmd_pnl(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     mode = get_active_trading_mode()
     if context.args and context.args[0].lower() in ("live", "paper"):
         mode = context.args[0].lower()
-    await _reply_markdown_safe(update, _build_pnl_text(mode=mode))
+    keyboard = _mode_toggle_keyboard("pnl", mode)
+    await _reply_markdown_safe(update, _build_pnl_text(mode=mode), reply_markup=keyboard)
 
 
 async def cmd_positions(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -872,7 +897,8 @@ async def cmd_positions(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     mode = get_active_trading_mode()
     if context.args and context.args[0].lower() in ("live", "paper"):
         mode = context.args[0].lower()
-    await _reply_markdown_safe(update, _build_positions_text(mode=mode))
+    keyboard = _mode_toggle_keyboard("positions", mode)
+    await _reply_markdown_safe(update, _build_positions_text(mode=mode), reply_markup=keyboard)
 
 
 async def cmd_health(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -913,7 +939,54 @@ async def cmd_summary(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     mode = get_active_trading_mode()
     if context.args and context.args[0].lower() in ("live", "paper"):
         mode = context.args[0].lower()
-    await _reply_markdown_safe(update, _build_summary_text(mode=mode))
+    keyboard = _mode_toggle_keyboard("summary", mode)
+    await _reply_markdown_safe(update, _build_summary_text(mode=mode), reply_markup=keyboard)
+
+
+async def on_mode_toggle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handles inline button clicks to toggle between Live and Paper views."""
+    query = update.callback_query
+    if query is None:
+        return
+
+    chat_id = query.message.chat.id if query.message else None
+    if chat_id is None or not SubscribersRegistry().is_active(chat_id):
+        await query.answer("You must be subscribed to use this bot.", show_alert=True)
+        return
+
+    data = query.data or ""
+    if ":" not in data:
+        await query.answer()
+        return
+
+    cmd, target_mode = data.split(":", 1)
+    target_mode = target_mode.lower()
+    if target_mode not in ("live", "paper"):
+        await query.answer()
+        return
+
+    await query.answer()
+
+    if cmd == "pnl":
+        text = _build_pnl_text(mode=target_mode)
+    elif cmd == "positions":
+        text = _build_positions_text(mode=target_mode)
+    elif cmd == "summary":
+        text = _build_summary_text(mode=target_mode)
+    else:
+        return
+
+    keyboard = _mode_toggle_keyboard(cmd, target_mode)
+    try:
+        await query.edit_message_text(text, parse_mode="Markdown", reply_markup=keyboard)
+    except Exception as e:
+        if "message is not modified" in str(e).lower():
+            return
+        log.warning("Markdown edit failed (%s); falling back to plain text", e)
+        try:
+            await query.edit_message_text(text, reply_markup=keyboard)
+        except Exception:
+            pass
 
 
 # --- owner-only admin handlers ---------------------------------------------
@@ -1092,6 +1165,7 @@ def main() -> int:
         app.add_handler(CommandHandler("pnl", cmd_pnl))
         app.add_handler(CommandHandler("positions", cmd_positions))
         app.add_handler(CommandHandler("summary", cmd_summary))
+        app.add_handler(CallbackQueryHandler(on_mode_toggle_callback, pattern=r"^(pnl|positions|summary):(live|paper)$"))
         app.add_handler(CommandHandler("subscribers", cmd_subscribers))
         app.add_handler(CommandHandler("pending", cmd_pending))
         app.add_handler(CommandHandler("revoke", cmd_revoke))
