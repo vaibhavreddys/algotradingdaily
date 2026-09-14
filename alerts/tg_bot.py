@@ -251,18 +251,21 @@ def _safe_ltp(ticker: str) -> Optional[Dict[str, Any]]:
 def _build_pnl_text(mode: str = "paper", config: TradingConfig = CONFIG) -> str:
     """Today's realized + best-effort open MTM P&L scorecard."""
     today_prefix = datetime.datetime.now().strftime("%Y-%m-%d")
+    is_live = (str(mode).lower() == "live")
     try:
         realized = get_today_realized_pnl(mode=mode)
     except Exception as e:
         return f"⚠️ Could not read trade database: `{e}`"
 
     try:
-        today_trades = [
-            t for t in get_trade_journal(mode=mode, limit=500)
-            if str(t.get("exit_time", "")).startswith(today_prefix)
-        ]
-    except Exception as e:
-        return f"⚠️ Could not read trade journal: `{e}`"
+        all_journal = get_trade_journal(mode=mode, limit=500)
+    except Exception:
+        all_journal = []
+
+    today_trades = [
+        t for t in all_journal
+        if str(t.get("exit_time", "")).startswith(today_prefix)
+    ]
 
     wins = sum(1 for t in today_trades if float(t.get("net_pnl", 0)) > 0)
     losses = sum(1 for t in today_trades if float(t.get("net_pnl", 0)) <= 0)
@@ -290,8 +293,21 @@ def _build_pnl_text(mode: str = "paper", config: TradingConfig = CONFIG) -> str:
         open_mtm_total += (entry - ltp) * qty
         open_mtm_known += 1
 
-    # Ending capital: latest balance_after_trade if present, else starting capital + realized.
-    ending_capital = config.INITIAL_CAPITAL + realized
+    # Resolve baseline account capital dynamically
+    cap_tag = ""
+    if is_live:
+        f_info = _get_live_broker_funds(config)
+        if f_info["is_connected"] and f_info["available_margin"] is not None and f_info["available_margin"] > 0:
+            starting_cap = float(f_info["available_margin"])
+            cap_tag = f" ({getattr(config, 'ACTIVE_BROKER', 'shoonya').title()} Live)"
+        else:
+            starting_cap = getattr(config, "INITIAL_CAPITAL", 100000.0)
+    else:
+        from core.capital import get_persisted_paper_capital
+        starting_cap = get_persisted_paper_capital(initial_capital=config.INITIAL_CAPITAL, mode="paper")
+
+    # Ending capital: latest balance_after_trade if trades occurred today, else starting_cap + realized
+    ending_capital = starting_cap + realized
     if today_trades:
         last = max(today_trades, key=lambda t: t.get("id", 0))
         bal = last.get("balance_after_trade")
@@ -299,10 +315,20 @@ def _build_pnl_text(mode: str = "paper", config: TradingConfig = CONFIG) -> str:
             ending_capital = float(bal)
 
     total_today = realized + open_mtm_total
-    total_pct = (total_today / config.INITIAL_CAPITAL * 100.0) if config.INITIAL_CAPITAL > 0 else 0.0
+    total_pct = (total_today / starting_cap * 100.0) if starting_cap > 0 else 0.0
     mtm_note = f" (across {open_mtm_known} open)" if open_mtm_known else ""
     if open_mtm_unknown and not open_mtm_known:
         mtm_note = " (n/a — live tick unavailable)"
+
+    # Lifetime summary snippet for context
+    lifetime_trades_count = len(all_journal)
+    lifetime_net = sum(float(t.get("net_pnl", 0)) for t in all_journal)
+    lifetime_wins = sum(1 for t in all_journal if float(t.get("net_pnl", 0)) > 0)
+    lifetime_win_rate = (lifetime_wins / lifetime_trades_count * 100.0) if lifetime_trades_count else 0.0
+
+    trades_note = ""
+    if not today_trades:
+        trades_note = " _(No trades today)_"
 
     return (
         f"📊 *[TODAY P&L SCORECARD ({mode.upper()})]*\n"
@@ -311,8 +337,9 @@ def _build_pnl_text(mode: str = "paper", config: TradingConfig = CONFIG) -> str:
         f"• Open MTM P&L: {'+' if open_mtm_total >= 0 else '-'}₹{abs(open_mtm_total):,.2f}{mtm_note}\n"
         f"• Total Today: {'+' if total_today >= 0 else '-'}₹{abs(total_today):,.2f} "
         f"({total_pct:+.2f}%)\n"
-        f"• Total Trades: {len(today_trades)} ({wins} Wins, {losses} Losses)\n"
-        f"• Ending Capital: ₹{ending_capital:,.2f}"
+        f"• Total Trades: {len(today_trades)} ({wins} Wins, {losses} Losses){trades_note}\n"
+        f"• Ending Capital: ₹{ending_capital:,.2f}{cap_tag}\n"
+        f"• Lifetime P&L: {'+' if lifetime_net >= 0 else '-'}₹{abs(lifetime_net):,.2f} ({lifetime_trades_count} Trades, {lifetime_win_rate:.1f}% Win Rate)"
     )
 
 
