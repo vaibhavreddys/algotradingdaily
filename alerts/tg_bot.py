@@ -25,6 +25,7 @@ from dotenv import load_dotenv
 load_dotenv()
 import logging
 import datetime
+from pathlib import Path
 from typing import Optional, List, Dict, Any, Tuple
 
 if hasattr(sys.stdout, "reconfigure"):
@@ -556,6 +557,51 @@ def _probe_openalgo_gateway(config: TradingConfig) -> Tuple[str, str]:
     return "🔴", f"Unreachable on {host} ({last_exc}{_detail()})"
 
 
+def get_active_trading_mode(config: Optional[TradingConfig] = None) -> str:
+    """
+    Dynamically resolves active trading mode ('live' or 'paper'):
+      1. If config has an explicit TRADING_MODE override (and is not global CONFIG), respect it.
+      2. If live_trader.py process is currently running on system -> 'live'.
+      3. If paper_trader.py process is currently running on system -> 'paper'.
+      4. If logs/active_mode.txt exists (set by run_daily_algo.sh) -> use its value.
+      5. Fallback to CONFIG.TRADING_MODE (defaults to 'paper').
+    """
+    if config is not None and getattr(config, "TRADING_MODE", None) and config != CONFIG:
+        return str(config.TRADING_MODE).lower()
+
+    # 1. Process probe
+    try:
+        if os.path.exists("/proc"):
+            for entry in os.listdir("/proc"):
+                if not entry.isdigit():
+                    continue
+                try:
+                    with open(f"/proc/{entry}/cmdline", "rb") as f:
+                        cmdline = f.read().decode("utf-8", errors="replace")
+                        if "live_trader.py" in cmdline and "tg_bot" not in cmdline:
+                            return "live"
+                        if "paper_trader.py" in cmdline and "tg_bot" not in cmdline:
+                            return "paper"
+                except (OSError, PermissionError):
+                    continue
+    except Exception:
+        pass
+
+    # 2. Check logs/active_mode.txt
+    try:
+        cfg = config or CONFIG
+        logs_dir = getattr(cfg, "LOGS_DIR", "logs")
+        mode_file = Path(logs_dir) / "active_mode.txt"
+        if mode_file.exists():
+            content = mode_file.read_text(encoding="utf-8").strip().lower()
+            if content in ("live", "paper"):
+                return content
+    except Exception:
+        pass
+
+    return getattr(config or CONFIG, "TRADING_MODE", "paper").lower()
+
+
 def _probe_engine_process(mode: str, config: Optional[TradingConfig] = None) -> Tuple[str, str]:
     """
     Returns (icon, status_text) for the trading engine process launched by
@@ -660,7 +706,8 @@ def _next_scan_time(config: TradingConfig) -> str:
 
 def _build_status_text(config: TradingConfig = CONFIG) -> str:
     """Engine + market heartbeat, active strategy, capital and broker connection status."""
-    engine_icon, engine_text = _probe_engine_heartbeat(config.TRADING_MODE, config=config)
+    active_mode = get_active_trading_mode(config)
+    engine_icon, engine_text = _probe_engine_heartbeat(active_mode, config=config)
     market_icon, market_text = _probe_market_status(config)
     timeframe = getattr(config, "TIMEFRAME", "15m")
     try:
@@ -677,7 +724,7 @@ def _build_status_text(config: TradingConfig = CONFIG) -> str:
 
     f_info = _get_live_broker_funds(config)
     broker_tag = _probe_broker_connection(config, f_info=f_info)
-    is_live = (str(config.TRADING_MODE).lower() == "live")
+    is_live = (active_mode == "live")
     broker_title = (getattr(config, "ACTIVE_BROKER", "shoonya") or "Shoonya").title()
 
     if is_live:
@@ -693,7 +740,7 @@ def _build_status_text(config: TradingConfig = CONFIG) -> str:
             ]
     else:
         from core.capital import get_persisted_paper_capital
-        cap = get_persisted_paper_capital(initial_capital=config.INITIAL_CAPITAL, mode=config.TRADING_MODE)
+        cap = get_persisted_paper_capital(initial_capital=config.INITIAL_CAPITAL, mode=active_mode)
         capital_lines = [f"• Account Capital (Paper): ₹{cap:,.2f}"]
         if f_info["is_connected"] and f_info["available_margin"] is not None and f_info["available_margin"] > 0:
             capital_lines.append(f"• {broker_title} Live Margin: ₹{f_info['available_margin']:,.2f}")
@@ -711,7 +758,7 @@ def _build_status_text(config: TradingConfig = CONFIG) -> str:
 
     return (
         "🏥 *[SYSTEM STATUS]*\n"
-        f"• Mode: `{config.TRADING_MODE.upper()} TRADING` {broker_tag}\n"
+        f"• Mode: `{active_mode.upper()} TRADING` {broker_tag}\n"
         f"• Strategy: `{strategy_line}`\n"
         f"{cap_section}\n"
         f"• Engine: {engine_icon} {engine_text}\n"
@@ -728,7 +775,7 @@ def _build_health_text(config: TradingConfig = CONFIG) -> str:
     the trading engine process launched by scripts/run_daily_algo.sh. Each probe
     is guarded so one broken component degrades its own line, never the report.
     """
-    mode = getattr(config, "TRADING_MODE", "paper")
+    mode = get_active_trading_mode(config)
 
     try:
         gw_icon, gw_text = _probe_openalgo_gateway(config)
@@ -774,8 +821,9 @@ def _build_summary_text(mode: str = "paper") -> str:
     except Exception as e:
         return f"⚠️ Could not read trade journal: `{e}`"
 
+    mode_label = mode.upper()
     if not journal:
-        return "📈 *[STRATEGY LIFETIME SUMMARY]*\n• No trades recorded yet."
+        return f"📈 *[STRATEGY LIFETIME SUMMARY ({mode_label})]*\n• No trades recorded yet."
 
     total = len(journal)
     wins = [t for t in journal if float(t.get("net_pnl", 0)) > 0]
@@ -794,7 +842,7 @@ def _build_summary_text(mode: str = "paper") -> str:
     total_net = gross_gains - gross_losses
 
     return (
-        f"📈 *[STRATEGY LIFETIME SUMMARY]*\n"
+        f"📈 *[STRATEGY LIFETIME SUMMARY ({mode_label})]*\n"
         f"• Total Trades: {total}\n"
         f"• Wins / Losses: {len(wins)} / {len(losses)}\n"
         f"• Win Rate: {win_rate:.2f}%\n"
@@ -809,13 +857,19 @@ def _build_summary_text(mode: str = "paper") -> str:
 async def cmd_pnl(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not await _require_subscriber(update):
         return
-    await _reply_markdown_safe(update, _build_pnl_text(mode=CONFIG.TRADING_MODE))
+    mode = get_active_trading_mode()
+    if context.args and context.args[0].lower() in ("live", "paper"):
+        mode = context.args[0].lower()
+    await _reply_markdown_safe(update, _build_pnl_text(mode=mode))
 
 
 async def cmd_positions(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not await _require_subscriber(update):
         return
-    await _reply_markdown_safe(update, _build_positions_text(mode=CONFIG.TRADING_MODE))
+    mode = get_active_trading_mode()
+    if context.args and context.args[0].lower() in ("live", "paper"):
+        mode = context.args[0].lower()
+    await _reply_markdown_safe(update, _build_positions_text(mode=mode))
 
 
 async def cmd_health(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -853,7 +907,10 @@ async def cmd_recover(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 async def cmd_summary(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not await _require_subscriber(update):
         return
-    await _reply_markdown_safe(update, _build_summary_text(mode=CONFIG.TRADING_MODE))
+    mode = get_active_trading_mode()
+    if context.args and context.args[0].lower() in ("live", "paper"):
+        mode = context.args[0].lower()
+    await _reply_markdown_safe(update, _build_summary_text(mode=mode))
 
 
 # --- owner-only admin handlers ---------------------------------------------

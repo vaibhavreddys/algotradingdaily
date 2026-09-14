@@ -18,6 +18,8 @@ RETENTION_DAYS=30
 LOGS_DIR="${REPO_DIR}/logs/${MODE}"
 mkdir -p "${LOGS_DIR}"
 mkdir -p "${REPO_DIR}/logs"
+echo "${MODE}" > "${REPO_DIR}/logs/active_mode.txt"
+export TRADING_MODE="${MODE}"
 
 if [ "${MODE}" = "live" ]; then
     TARGET_SCRIPT="live_trading/live_trader.py"
