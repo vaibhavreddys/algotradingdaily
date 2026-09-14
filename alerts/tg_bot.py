@@ -589,9 +589,12 @@ def get_active_trading_mode(config: Optional[TradingConfig] = None) -> str:
 
     # 2. Check logs/active_mode.txt
     try:
-        cfg = config or CONFIG
-        logs_dir = getattr(cfg, "LOGS_DIR", "logs")
-        mode_file = Path(logs_dir) / "active_mode.txt"
+        repo_root = Path(__file__).resolve().parent.parent
+        mode_file = repo_root / "logs" / "active_mode.txt"
+        if not mode_file.exists():
+            cfg = config or CONFIG
+            logs_dir = getattr(cfg, "LOGS_DIR", "logs")
+            mode_file = Path(logs_dir) / "active_mode.txt"
         if mode_file.exists():
             content = mode_file.read_text(encoding="utf-8").strip().lower()
             if content in ("live", "paper"):
