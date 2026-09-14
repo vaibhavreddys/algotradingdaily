@@ -55,6 +55,10 @@ class PaperTradingEngine(BaseTradingEngine):
             sl_price=sl_price,
             max_risk_pct=self.config.MAX_RISK_PER_TRADE_PCT
         )
+        if qty <= 0:
+            print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] ⚠️ Order sizing returned 0 qty for {symbol} (Capital: ₹{self.get_account_capital():,.2f}, Price: ₹{entry_price:.2f}). Skipping entry.")
+            return False
+
         risk = abs(sl_price - entry_price)
         entry_time = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 

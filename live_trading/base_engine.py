@@ -180,26 +180,35 @@ class BaseTradingEngine:
         """Returns the active available capital for position sizing."""
         if (self.mode == "live" or getattr(self.config, 'TRADING_MODE', 'paper') == "live") and self.api:
             try:
-                limits = self.api.get_limits()
-                auth_reason = self._looks_like_auth_failure(limits)
-                if auth_reason:
-                    notify_system_error(
-                        component="OpenAlgo",
-                        error_msg=f"Broker session rejected: {auth_reason}",
-                        severity="warning",
-                        action_taken="Please run the morning re-authentication script to refresh the broker API key.",
-                    )
-                if limits and limits.get('stat') == 'Ok':
-                    # Check payin / cash / net fields
-                    cash = float(limits.get('cash', 0.0))
-                    margin_used = float(limits.get('marginused', 0.0))
-                    payin = float(limits.get('payin', 0.0))
-                    net_avail = (cash + payin) - margin_used
-                    if net_avail > 0:
-                        return net_avail
-                    if 'net' in limits:
-                        return float(limits['net'])
-            except Exception:
+                funds_fn = getattr(self.api, 'funds', None) or getattr(self.api, 'get_limits', None)
+                if funds_fn:
+                    res = funds_fn()
+                    if isinstance(res, dict) and res.get('status') == 'success':
+                        data = res.get('data', {})
+                        if isinstance(data, dict):
+                            avail = data.get('availablecash') or data.get('cash') or data.get('net')
+                            if avail is not None:
+                                avail_float = float(avail)
+                                if avail_float > 0:
+                                    return avail_float
+                    auth_reason = self._looks_like_auth_failure(res)
+                    if auth_reason:
+                        notify_system_error(
+                            component="OpenAlgo",
+                            error_msg=f"Broker session rejected: {auth_reason}",
+                            severity="warning",
+                            action_taken="Please run the morning re-authentication script to refresh the broker API key.",
+                        )
+                    if isinstance(res, dict) and res.get('stat') == 'Ok':
+                        cash = float(res.get('cash', 0.0))
+                        margin_used = float(res.get('marginused', 0.0))
+                        payin = float(res.get('payin', 0.0))
+                        net_avail = (cash + payin) - margin_used
+                        if net_avail > 0:
+                            return net_avail
+                        if 'net' in res:
+                            return float(res['net'])
+            except Exception as e:
                 pass
             return float(self.config.INITIAL_CAPITAL)
         return get_persisted_paper_capital(initial_capital=self.config.INITIAL_CAPITAL, mode=self.mode)
